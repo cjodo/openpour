@@ -51,7 +51,7 @@ early enough that the water still in flight lands on target.
 1. **Print.** In `hardware/cad`, edit `config.scad`, then run `make`, or
    open `openpour.scad` in OpenSCAD and choose a part. Print in PETG or ASA.
 2. **Buy.** See the [bill of materials](docs/BOM.md). It comes to about
-   $170–210.
+   US$170–210 (CA$240–300, €150–190).
 3. **Wire.** See [wiring](docs/wiring.md).
 4. **Flash.** Install [PlatformIO](https://platformio.org), then:
    ```sh
