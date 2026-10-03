@@ -19,7 +19,7 @@ Set the buck converter to 5.0 V **before** connecting the ESP32.
 
 ## ESP32 pin map
 
-The pin map is defined in `firmware/include/pins.h`.
+The pin map is defined at the top of `firmware/esp32/src/main.rs`.
 
 | ESP32 GPIO | Connects to | Notes |
 |---|---|---|

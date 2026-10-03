@@ -1,0 +1,9 @@
+# Same data partitions (and offsets) as the Arduino default 4 MB layout, so
+# settings and recipes saved by older firmware survive the switch. The two
+# OTA app slots become one larger factory app.
+# Name,   Type, SubType,  Offset,   Size
+nvs,      data, nvs,      0x9000,   0x5000
+phy_init, data, phy,      0xe000,   0x2000
+factory,  app,  factory,  0x10000,  0x280000
+spiffs,   data, spiffs,   0x290000, 0x160000
+coredump, data, coredump, 0x3F0000, 0x10000

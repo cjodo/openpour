@@ -1,0 +1,36 @@
+[package]
+name = "openpour"
+version = "0.1.0"
+edition = "2021"
+description = "OpenPour firmware for the ESP32"
+license = "MIT"
+resolver = "2"
+
+[[bin]]
+name = "openpour"
+harness = false # no std test harness on the target; tests live in ../pourcore
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[dependencies]
+pourcore = { path = "../pourcore" }
+anyhow = "1"
+log = "0.4"
+esp-idf-svc = "0.53"
+serde_json = "1"
+
+[build-dependencies]
+embuild = "0.33"
+flate2 = "1"
+
+# ESP-IDF components fetched by the IDF component manager.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "joltwallet/littlefs", version = "1.14" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/mdns", version = "1.4" }

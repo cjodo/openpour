@@ -42,7 +42,7 @@ early enough that the water still in flight lands on target.
 | Path | What |
 |---|---|
 | `hardware/cad/` | OpenSCAD model. `config.scad` holds every dimension; `make` exports STLs |
-| `firmware/` | ESP32 firmware (PlatformIO, Arduino framework) |
+| `firmware/` | ESP32 firmware in Rust: `pourcore/` holds the hardware-independent logic, `esp32/` runs it on ESP-IDF |
 | `web/` | The control app: plain HTML/CSS/JS, embedded into the firmware at build time |
 | `docs/` | [BOM](docs/BOM.md), [wiring](docs/wiring.md), [assembly](docs/assembly.md), [calibration](docs/calibration.md) |
 
@@ -53,12 +53,22 @@ early enough that the water still in flight lands on target.
 2. **Buy.** See the [bill of materials](docs/BOM.md). It comes to about
    US$170–210 (CA$240–300, €150–190).
 3. **Wire.** See [wiring](docs/wiring.md).
-4. **Flash.** Install [PlatformIO](https://platformio.org), then:
+4. **Flash.** Install the Rust ESP32 toolchain once:
    ```sh
-   cd firmware
-   pio run -t upload      # firmware + web app in one image
-   pio device monitor     # shows the address to open
+   cargo install espup ldproxy espflash
+   espup install --targets esp32     # writes ~/export-esp.sh
    ```
+   espflash 4.6 needs Rust 1.95 or newer; on an older Rust, install
+   `espflash@4.5.0` instead.
+   Then plug in the board and run:
+   ```sh
+   source ~/export-esp.sh
+   cd firmware/esp32
+   cargo run --release    # builds, flashes firmware + web app, opens the monitor
+   ```
+   The first build downloads ESP-IDF, so it takes a while. The serial
+   monitor shows the address to open. On Linux, add yourself to the group
+   that owns `/dev/ttyUSB0` (`uucp` on Arch, `dialout` on Debian/Ubuntu).
 5. **Calibrate.** Follow [calibration](docs/calibration.md). On first boot,
    join the `OpenPour-XXXX` Wi-Fi network (password `pourover`) and open
    http://192.168.4.1.
@@ -76,12 +86,14 @@ the firmware, so recipes, brewing and calibration all work in the browser.
 
 ## Firmware tests
 
-The kinematics, pour patterns and flow control are plain C++ with no
-hardware dependencies:
+Kinematics, pour patterns, flow control, scale filtering, motion control,
+the brew state machine and command handling all live in `pourcore`, which
+has no hardware dependencies. Its tests run on your computer, with a
+simulated machine for the brew tests:
 
 ```sh
-cd firmware
-pio test -e native
+cd firmware/pourcore
+cargo test
 ```
 
 ## Recipe format
@@ -115,8 +127,9 @@ second around the dripper.
 
 ## Status
 
-The firmware compiles and its core logic is unit-tested. The app runs
-against the simulator. The mechanical design is a first revision that hasn't
+The firmware (Rust, on ESP-IDF) compiles and its core logic is unit-tested,
+including simulated brews, but it hasn't run on real hardware yet. The app
+runs against the simulator. The mechanical design is a first revision that hasn't
 been printed yet. Expect to adjust clearances, switch positions and hole
 sizes on the first build. Reports and fixes are welcome.
 

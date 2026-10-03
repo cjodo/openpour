@@ -1,0 +1,20 @@
+# Rust std needs a roomier main task. Run it on core 1 and leave core 0 to
+# Wi-Fi, so the step-generation interrupt (allocated from the main task)
+# also lands on core 1.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=20000
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192
+
+# 1 ms ticks so the main loop can poll at 1 kHz.
+CONFIG_FREERTOS_HZ=1000
+
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# The real table is partitions.csv (flashed by espflash); this only tells the
+# build the app may be larger than 1 MB.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=256
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

@@ -1,5 +1,6 @@
-firmware/.pio/
-firmware/src/generated/
+firmware/*/target/
+firmware/esp32/.embuild/
+firmware/esp32/sdkconfig
 hardware/cad/stl/
 hardware/cad/preview.png
 .vscode/
