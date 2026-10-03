@@ -1,0 +1,41 @@
+[
+  {
+    "id": "v60-single",
+    "name": "V60 single cup",
+    "dose": 15,
+    "minTemp": 92,
+    "stages": [
+      { "name": "Bloom", "water": 45, "flow": 4, "pattern": "spiral", "radius": 22, "rps": 1.2, "wait": 40 },
+      { "name": "Pour 1", "water": 55, "flow": 4.5, "pattern": "spiral", "radius": 26, "rps": 1, "wait": 10 },
+      { "name": "Pour 2", "water": 50, "flow": 4.5, "pattern": "spiral", "radius": 26, "rps": 1, "wait": 10 },
+      { "name": "Pour 3", "water": 50, "flow": 4.5, "pattern": "spiral", "radius": 26, "rps": 1, "wait": 10 },
+      { "name": "Pour 4", "water": 50, "flow": 4, "pattern": "circle", "radius": 18, "rps": 1, "wait": 0 }
+    ]
+  },
+  {
+    "id": "kalita-wave",
+    "name": "Kalita Wave 185",
+    "dose": 20,
+    "minTemp": 93,
+    "stages": [
+      { "name": "Bloom", "water": 50, "flow": 4, "pattern": "spiral", "radius": 25, "rps": 1, "wait": 35 },
+      { "name": "Pulse 1", "water": 70, "flow": 3.5, "pattern": "circle", "radius": 22, "rps": 0.8, "wait": 15 },
+      { "name": "Pulse 2", "water": 70, "flow": 3.5, "pattern": "circle", "radius": 22, "rps": 0.8, "wait": 15 },
+      { "name": "Pulse 3", "water": 65, "flow": 3.5, "pattern": "circle", "radius": 22, "rps": 0.8, "wait": 15 },
+      { "name": "Pulse 4", "water": 65, "flow": 3.5, "pattern": "circle", "radius": 22, "rps": 0.8, "wait": 0 }
+    ]
+  },
+  {
+    "id": "four-six",
+    "name": "4:6 method",
+    "dose": 20,
+    "minTemp": 92,
+    "stages": [
+      { "name": "Sweetness 1", "water": 50, "flow": 5, "pattern": "spiral", "radius": 25, "rps": 1, "wait": 40 },
+      { "name": "Sweetness 2", "water": 70, "flow": 5, "pattern": "spiral", "radius": 25, "rps": 1, "wait": 40 },
+      { "name": "Strength 1", "water": 60, "flow": 5, "pattern": "spiral", "radius": 25, "rps": 1, "wait": 40 },
+      { "name": "Strength 2", "water": 60, "flow": 5, "pattern": "spiral", "radius": 25, "rps": 1, "wait": 40 },
+      { "name": "Strength 3", "water": 60, "flow": 5, "pattern": "spiral", "radius": 25, "rps": 1, "wait": 0 }
+    ]
+  }
+]

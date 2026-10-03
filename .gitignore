@@ -1,0 +1,5 @@
+firmware/.pio/
+firmware/src/generated/
+hardware/cad/stl/
+hardware/cad/preview.png
+.vscode/

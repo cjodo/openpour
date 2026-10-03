@@ -1,0 +1,9 @@
+{
+  "name": "OpenPour",
+  "short_name": "OpenPour",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e8ecea",
+  "theme_color": "#e8ecea",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
