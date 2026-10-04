@@ -1,0 +1,15 @@
+{
+  "name": "openpour-web",
+  "private": true,
+  "type": "module",
+  "description": "OpenPour control app, embedded into the firmware",
+  "scripts": {
+    "dev": "node build.mjs --dev",
+    "build": "tsc && node build.mjs",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

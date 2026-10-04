@@ -1,41 +1,50 @@
 // A simulated machine for developing the app without hardware.
-// Serve the web/ folder and open index.html?mock (add &speed=4 to fast-forward).
+// `npm run dev` and open http://localhost:8000/?mock (add &speed=4 to fast-forward).
 // It mirrors the firmware's REST + WebSocket protocol closely enough to brew,
-// edit recipes and walk through calibration.
+// edit recipes and walk through calibration. Left out of firmware builds.
+
+import type { Command, MachineState, Notice, Recipe, Settings, SocketLike, Stage, Status, Transport } from './types';
 
 const params = new URLSearchParams(location.search);
-const SPEED = Math.max(0.25, +params.get('speed') || 1);
+const SPEED = Math.max(0.25, +(params.get('speed') ?? 1) || 1);
 const TICK_MS = 50;
 const REAL_PUMP_GPS = 6.6;   // what the "real" pump does at full power
 const REAL_METER_PPL = 2010; // what the "real" flow meter does (settings start at the datasheet value)
 const METER_LAG_S = 0.1;     // pump coast-down after it is switched off
 
-export function createMock() {
-  const settings = {
+export function createMock(): Transport {
+  const settings: Settings = {
     hostname: 'openpour', lastRecipe: '', wifiSsid: '', apMode: true,
     flowPulsesPerLitre: 1925, pumpGpsAtFull: 6.0, pumpMinDuty: 0.25, pumpLagS: 0.15,
     thetaStepsPerDeg: 8.889, radialStepsPerMm: 80, invertTheta: false, invertRadial: false,
     thetaHomeDeg: -75, radialHomeMm: 66, thetaMinDeg: -78, thetaMaxDeg: 25,
     radialMinMm: 66, radialMaxMm: 175, centerR: 110, centerThetaDeg: 0, parkR: 80, parkThetaDeg: -60,
   };
-  let recipes = null;
-  const sockets = new Set();
+  let recipes: Recipe[] | null = null;
+  const sockets = new Set<MockSocket>();
 
   const sim = {
-    state: 'idle', pausedFrom: null, recipe: null, stage: 0, target: 0, inState: 0,
+    state: 'idle' as MachineState,
+    pausedFrom: 'idle' as MachineState,
+    pausedIn: 0,
+    recipe: null as Recipe | null,
+    stage: 0, target: 0, inState: 0,
     elapsed: 0, pulses: 0, duty: 0, temp: 94.5, homed: false, motion: 'released',
-    error: '', message: '', primeLeft: 0, calStep: '', calKind: '',
-    coast: 0, hist: [],
+    error: '', message: '', primeLeft: 0, toIdle: false,
+    calStep: '' as '' | 'prepare' | 'run' | 'settle',
+    calKind: '' as '' | 'pump' | 'meter',
+    coast: 0,
+    hist: [] as { t: number; w: number }[],
   };
 
-  async function ensureRecipes() {
-    if (!recipes) recipes = await (await window.fetch('default-recipes.json')).json();
+  async function ensureRecipes(): Promise<Recipe[]> {
+    if (!recipes) recipes = (await (await window.fetch('default-recipes.json')).json()) as Recipe[];
     return recipes;
   }
 
-  const enter = (s) => { sim.state = s; sim.inState = 0; };
-  const stage = () => sim.recipe.stages[sim.stage];
-  const total = () => sim.recipe.stages.reduce((a, s) => a + s.water, 0);
+  const enter = (s: MachineState) => { sim.state = s; sim.inState = 0; };
+  const stage = (): Stage => sim.recipe!.stages[sim.stage];
+  const total = () => sim.recipe!.stages.reduce((a, s) => a + s.water, 0);
   const grams = () => (sim.pulses * 1000) / settings.flowPulsesPerLitre;
   const resetMeter = () => { sim.pulses = 0; sim.hist = []; };
 
@@ -47,24 +56,17 @@ export function createMock() {
     return now.t > old.t ? (now.w - old.w) / (now.t - old.t) : 0;
   }
 
-  function broadcast(obj) {
+  function broadcast(obj: Status | Notice) {
     const data = JSON.stringify(obj);
-    for (const s of sockets) s.onmessage?.({ data });
+    for (const s of sockets) s.onmessage?.(new MessageEvent('message', { data }));
   }
-  const notify = (t, msg) => broadcast({ t, msg });
+  const notify = (t: Notice['t'], msg: string) => broadcast({ t, msg });
 
-  function beginStage(i) {
+  function beginStage(i: number) {
     sim.stage = i;
     sim.target += stage().water;
     sim.motion = 'pouring';
     enter(stage().water > 0 ? 'pouring' : 'waiting');
-  }
-
-  function fail(msg) {
-    sim.duty = 0;
-    sim.error = msg;
-    sim.motion = 'holding';
-    enter('error');
   }
 
   function finish() {
@@ -73,7 +75,7 @@ export function createMock() {
     enter('finishing');
   }
 
-  function step(dt) {
+  function step(dt: number) {
     sim.inState += dt;
     sim.temp = Math.max(70, sim.temp - 0.004 * dt);
 
@@ -111,7 +113,7 @@ export function createMock() {
       case 'waiting':
         sim.elapsed += dt;
         if (sim.inState >= stage().wait) {
-          if (sim.stage + 1 < sim.recipe.stages.length) beginStage(sim.stage + 1);
+          if (sim.stage + 1 < sim.recipe!.stages.length) beginStage(sim.stage + 1);
           else finish();
         }
         break;
@@ -149,8 +151,8 @@ export function createMock() {
     }
   }
 
-  function status() {
-    const s = {
+  function status(): Status {
+    const s: Status = {
       t: 'status', state: sim.state, poured: grams(), flow: flow(), duty: sim.duty,
       temp: sim.temp, motion: sim.motion, homed: sim.homed,
     };
@@ -171,11 +173,11 @@ export function createMock() {
 
   const active = () => !['idle', 'done', 'error'].includes(sim.state);
 
-  async function command({ cmd, ...a }) {
-    switch (cmd) {
+  async function command(c: Command) {
+    switch (c.cmd) {
       case 'start': {
         if (active()) return notify('error', 'A brew is already running.');
-        const r = (await ensureRecipes()).find((x) => x.id === a.recipe);
+        const r = (await ensureRecipes()).find((x) => x.id === c.recipe);
         if (!r || !r.stages.length) return notify('error', 'That recipe was not found or has no stages.');
         settings.lastRecipe = r.id;
         Object.assign(sim, { recipe: r, stage: 0, target: 0, elapsed: 0, error: '', message: '', toIdle: false });
@@ -208,7 +210,7 @@ export function createMock() {
         return;
     }
     if (active()) return notify('error', "That isn't available while brewing.");
-    switch (cmd) {
+    switch (c.cmd) {
       case 'home': sim.motion = 'homing'; setTimeout(() => { sim.homed = true; sim.motion = 'holding'; }, 2500 / SPEED); return;
       case 'park': case 'center': case 'jog':
         if (!sim.homed) return notify('error', 'Home the arm first.');
@@ -216,9 +218,9 @@ export function createMock() {
         return;
       case 'setCenter': return notify('info', 'Dripper centre saved.');
       case 'release': sim.homed = false; sim.motion = 'released'; return;
-      case 'prime': sim.duty = a.duty ?? 1; sim.primeLeft = a.seconds ?? 3; return;
+      case 'prime': sim.duty = c.duty ?? 1; sim.primeLeft = c.seconds ?? 3; return;
       case 'calMeter': {
-        const ml = +a.ml;
+        const ml = +c.ml;
         if (!(sim.pulses >= 50 && ml >= 10)) return notify('error', 'Dispense some water first, then enter how much came out.');
         settings.flowPulsesPerLitre = Math.round((sim.pulses * 1000) / ml);
         return notify('info', `Flow meter calibrated at ${settings.flowPulsesPerLitre} pulses per litre.`);
@@ -226,7 +228,7 @@ export function createMock() {
       case 'calPump': case 'meterRun':
         sim.message = '';
         sim.calStep = 'prepare';
-        sim.calKind = cmd === 'meterRun' ? 'meter' : 'pump';
+        sim.calKind = c.cmd === 'meterRun' ? 'meter' : 'pump';
         return enter('calibrating');
     }
   }
@@ -245,29 +247,33 @@ export function createMock() {
     }
   }, TICK_MS);
 
-  class MockSocket {
-    constructor() {
-      this.readyState = 0;
+  class MockSocket implements SocketLike {
+    readyState: number = WebSocket.CONNECTING;
+    onopen: SocketLike['onopen'] = null;
+    onclose: SocketLike['onclose'] = null;
+    onmessage: SocketLike['onmessage'] = null;
+
+    constructor(_url: string) {
       sockets.add(this);
       setTimeout(() => {
-        this.readyState = 1;
-        this.onopen?.();
-        this.onmessage?.({ data: JSON.stringify(status()) });
+        this.readyState = WebSocket.OPEN;
+        this.onopen?.(new Event('open'));
+        this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(status()) }));
       }, 150);
     }
-    send(data) { command(JSON.parse(data)); }
-    close() { sockets.delete(this); this.readyState = 3; this.onclose?.(); }
+    send(data: string) { command(JSON.parse(data) as Command); }
+    close() { sockets.delete(this); this.readyState = WebSocket.CLOSED; this.onclose?.(new CloseEvent('close')); }
   }
 
-  const json = (body, status = 200) =>
+  const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-  async function fetch(url, opts = {}) {
+  async function fetch(url: string, opts: RequestInit = {}): Promise<Response> {
     const path = new URL(url, location.href).pathname.replace(/.*\/api\//, '/api/');
     const method = opts.method || 'GET';
     if (path === '/api/settings') {
       if (method === 'GET') return json(settings);
-      const body = JSON.parse(opts.body);
+      const body = JSON.parse(String(opts.body)) as Partial<Settings> & { wifiPass?: string };
       const wifi = 'wifiSsid' in body || 'wifiPass' in body;
       delete body.wifiPass;
       Object.assign(settings, body);
@@ -276,9 +282,9 @@ export function createMock() {
     }
     if (path === '/api/recipes') {
       if (method === 'GET') return json(await ensureRecipes());
-      const body = JSON.parse(opts.body);
+      const body: unknown = JSON.parse(String(opts.body));
       if (!Array.isArray(body)) return json({ error: 'Expected an array of recipes' }, 400);
-      recipes = body;
+      recipes = body as Recipe[];
       setTimeout(() => notify('recipes', 'Recipes saved.'), 100);
       return json({ ok: true });
     }
