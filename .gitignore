@@ -6,3 +6,4 @@ hardware/cad/preview.png
 .vscode/
 web/node_modules/
 web/dist/
+firmware/sim/data/
