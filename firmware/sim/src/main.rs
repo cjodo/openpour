@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use pourcore::app::{self, Effect, Press};
 use pourcore::brew::Brew;
+use pourcore::nozzle;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -80,6 +81,7 @@ fn refresh(snapshot: &Mutex<Snapshot>, dev: &SimMachine) {
 fn simulate(rx: Receiver<ToSim>, out: broadcast::Sender<String>, snapshot: Arc<Mutex<Snapshot>>, o: &Options) {
     let mut dev = SimMachine::new(Some(o.data.clone()));
     let mut brew = Brew::default();
+    let mut trail = nozzle::Trail::default();
     refresh(&snapshot, &dev);
 
     let mut machine_ms = 0.0f64;
@@ -93,6 +95,7 @@ fn simulate(rx: Receiver<ToSim>, out: broadcast::Sender<String>, snapshot: Arc<M
         for _ in 0..due {
             dev.step(1);
             brew.update(&mut dev);
+            trail.update(&dev);
         }
         machine_ms = machine_ms.min(dev.now as f64 + 1.0);
 
@@ -132,7 +135,9 @@ fn simulate(rx: Receiver<ToSim>, out: broadcast::Sender<String>, snapshot: Arc<M
         if want_status || last_status.elapsed() >= STATUS_PERIOD {
             last_status = Instant::now();
             refresh(&snapshot, &dev);
-            let _ = out.send(brew.status(&dev).to_string());
+            let mut status = brew.status(&dev);
+            status["path"] = trail.take_json();
+            let _ = out.send(status.to_string());
         }
         std::thread::sleep(Duration::from_millis(1));
     }

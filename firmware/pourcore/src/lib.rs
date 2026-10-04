@@ -12,6 +12,7 @@ pub mod logbuf;
 pub mod machine;
 pub mod meter;
 pub mod motion;
+pub mod nozzle;
 pub mod pattern;
 pub mod recipes;
 pub mod settings;

@@ -566,6 +566,9 @@ impl Brew {
         }
         o.insert("motion".into(), json!(m.motion_mode()));
         o.insert("homed".into(), json!(m.homed()));
+        if let Some(p) = crate::nozzle::position(m) {
+            o.insert("nozzle".into(), crate::nozzle::to_json(p));
+        }
         if !self.error.is_empty() {
             o.insert("error".into(), json!(self.error));
         }
