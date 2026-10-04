@@ -127,15 +127,18 @@ Each chip has sliders for faults: dry pump, dead meter and a broken switch.
 The DS18B20, the button and a pump LED are standard Wokwi parts.
 
 ```sh
-firmware/wokwi/build.sh                            # chips + firmware (--features wokwi) + 4 MB flash image
-WOKWI_CLI_TOKEN=… wokwi-cli firmware/wokwi --timeout 60000
+firmware/wokwi/run.sh --timeout 60000     # builds if needed (--build to force), then runs wokwi-cli
 ```
+
+`run.sh` takes the token from `WOKWI_CLI_TOKEN` or from `~/.wokwi/token` (a
+bare token or a `NAME=token` line). It explains a missing or rejected token,
+and passes any other options to `wokwi-cli`. `build.sh` builds the chips, the
+firmware with `--features wokwi`, and a 4 MB flash image.
 
 The `wokwi` feature makes the firmware join Wokwi's open `Wokwi-GUEST`
 network instead of starting its own access point. In VS Code with the Wokwi
 extension, open `firmware/wokwi/` and the web app is at
-http://localhost:8180. `wokwi-cli` needs a free token from
-wokwi.com/dashboard/ci.
+http://localhost:8180. The token is free from wokwi.com/dashboard/ci.
 
 ### Browser-only mock
 
