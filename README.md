@@ -42,7 +42,7 @@ just early enough that the pump's coast-down lands on target.
 | Path | What |
 |---|---|
 | `hardware/cad/` | OpenSCAD model. `config.scad` holds every dimension; `make` exports STLs |
-| `firmware/` | ESP32 firmware in Rust: `pourcore/` holds the hardware-independent logic, `esp32/` runs it on ESP-IDF |
+| `firmware/` | ESP32 firmware in Rust: `pourcore/` holds the hardware-independent logic, `esp32/` runs it on ESP-IDF, `sim/` runs it on a PC against simulated hardware |
 | `web/` | The control app: TypeScript (`src/`) bundled with esbuild into `dist/`, which the firmware embeds at build time |
 | `docs/` | [BOM](docs/BOM.md), [wiring](docs/wiring.md), [assembly](docs/assembly.md), [calibration](docs/calibration.md) |
 
@@ -74,7 +74,43 @@ just early enough that the pump's coast-down lands on target.
    join the `OpenPour-XXXX` Wi-Fi network (password `pourover`) and open
    http://192.168.4.1.
 
-## Develop the app without hardware
+## Develop without hardware
+
+### Host simulator (the real firmware logic)
+
+`firmware/sim` runs the firmware's logic (`pourcore`: brewing, flow control,
+motion, the flow meter, command handling) on your computer against simulated
+hardware: stepper axes with endstop switches, a pump with ripple and
+coast-down, and a flow meter whose real pulses-per-litre differs from the
+default, so calibration matters as it does on a real machine. It serves the
+built web app and the firmware's exact API.
+
+```sh
+cd web && npm ci && npm run watch      # rebuilds web/dist on save (or `npm run build` once)
+cd firmware/sim && cargo run           # then open http://localhost:8080
+```
+
+- **Options:** `--speed 4` runs four times faster, `--lan` lets a phone on your
+  network connect, and `--port`, `--data` and `--web` change the defaults.
+  Settings and recipes persist in `firmware/sim/data/`.
+- **Logging:** the firmware's log lines print in the terminal. Run with
+  `RUST_LOG=debug` to also see the flow controller's internals.
+- **`GET /api/sim`** shows what really happened, for example how much water
+  reached the cup (`dispensedG`). Use it as the "real amount" when you
+  calibrate the meter.
+- **`POST /api/sim`** injects faults and drives the hardware, for example:
+
+  ```sh
+  curl -X POST localhost:8080/api/sim -d '{"faults":{"dry":true}}'
+  ```
+
+  - Faults: `dry`, `meterDead`, `radialEndstopStuck`, `thetaEndstopStuck`,
+    `noProbe`.
+  - Hardware: `trueGps` (pump rate), `truePpl` (meter pulses per litre),
+    `tempC`, `{"press": "short"|"long"}` (the front button), and
+    `{"resetDispensed": true}`.
+
+### Browser-only mock
 
 ```sh
 cd web
@@ -83,22 +119,24 @@ npm run dev
 # open http://localhost:8000/?mock          (add &speed=4 to fast-forward)
 ```
 
-`src/mock.ts` simulates the machine with the same REST and WebSocket protocol
-as the firmware, so recipes, brewing and calibration all work in the browser.
-Edits to `src/` take effect on reload. The protocol's types live in
-`src/types.ts`. Before committing, run `npm run typecheck` (`npm run build`
-also runs it). The simulator is left out of the firmware build.
+`src/mock.ts` is a simplified machine written in TypeScript. It needs no Rust
+toolchain, and edits to `src/` show up on reload. Because it's a separate
+implementation, check behaviour against the host simulator. The protocol's
+types live in `src/types.ts`. Before committing, run `npm run typecheck`
+(`npm run build` also runs it). Neither simulator is part of the firmware
+build.
 
 ## Firmware tests
 
 Kinematics, pour patterns, flow control, flow-meter counting, motion control,
 the brew state machine and command handling all live in `pourcore`, which
 has no hardware dependencies. Its tests run on your computer, with a
-simulated machine for the brew tests:
+simulated machine for the brew tests. The simulator's own tests brew through
+the real homing sequence and flow meter, including fault cases:
 
 ```sh
-cd firmware/pourcore
-cargo test
+cd firmware/pourcore && cargo test
+cd firmware/sim && cargo test
 ```
 
 ## Recipe format
