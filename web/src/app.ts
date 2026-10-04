@@ -1,6 +1,7 @@
 // OpenPour control app. Bundled by build.mjs; `npm run dev` serves it with the
 // simulated machine (see mock.ts) at http://localhost:8000/?mock.
 
+import { NozzleChart, TimeChart, TRAIL_MS, type Sample, type TrailPoint } from './charts';
 import type {
   Command, MachineState, Pattern, Recipe, ServerMessage, Settings, SocketLike, Stage, Status, Transport,
 } from './types';
@@ -19,16 +20,11 @@ const field = (form: HTMLFormElement, name: string) => form.elements.namedItem(n
 const MOCK = __SIMULATOR__ && (new URLSearchParams(location.search).has('mock') || location.protocol === 'file:');
 const BREWING = new Set<MachineState>(['preparing', 'pouring', 'waiting', 'paused', 'finishing', 'calibrating']);
 
-interface HistoryPoint {
-  t: number;
-  w: number;
-}
-
 const app: Transport & {
   recipes: Recipe[];
   settings: Settings | null;
   status: Status;
-  history: HistoryPoint[];
+  history: Sample[];
   editing: number;
   sock: SocketLike | null;
 } = {
@@ -127,9 +123,6 @@ function recipeSummary(r: Recipe) {
   return `${r.dose || '?'} g to ${total} g${ratio}, about ${clockTime(brewSeconds(r))}`;
 }
 
-function cssVar(name: string) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
 
 function escapeHtml(s: unknown) {
   const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -164,18 +157,14 @@ function phaseText(s: Status) {
 }
 
 function renderStatus(s: Status) {
-  const prev = app.status.state;
-  if (s.message && s.message !== app.status.message) {
+  const prev = app.status;
+  if (s.message && s.message !== prev.message) {
     toast(s.message);
     loadSettings(); // a calibration finished and may have changed them
   }
   app.status = s;
-
-  if (s.state === 'preparing' && prev !== 'preparing') app.history = [];
-  if (BREWING.has(s.state) && s.state !== 'calibrating' && s.elapsed != null) {
-    const last = app.history.at(-1);
-    if (!last || s.elapsed - last.t >= 0.2) app.history.push({ t: s.elapsed, w: s.poured });
-  }
+  recordHistory(s, prev);
+  queuePath(s);
 
   const recipe = activeRecipe();
   const total = s.total ?? (recipe ? totalWater(recipe) : 0);
@@ -193,7 +182,7 @@ function renderStatus(s: Status) {
 
   renderBeaker(recipe, s, total);
   renderStageStrip(recipe, s);
-  drawChart(recipe, total);
+  drawCharts();
 
   const err = $('#brew-error');
   err.hidden = !s.error;
@@ -263,53 +252,138 @@ function renderStageStrip(recipe: Recipe | undefined, s: Status) {
   });
 }
 
-function drawChart(recipe: Recipe | undefined, total: number) {
-  const c = $<HTMLCanvasElement>('#chart');
-  const dpr = window.devicePixelRatio || 1;
-  const w = c.clientWidth;
-  const h = c.clientHeight;
-  if (c.width !== w * dpr) c.width = w * dpr;
-  if (c.height !== h * dpr) c.height = h * dpr;
-  const g = c.getContext('2d');
-  if (!g) return;
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.clearRect(0, 0, w, h);
+// ---------------------------------------------------------------- live charts
 
-  const span = Math.max(60, recipe ? brewSeconds(recipe) * 1.1 : 60, app.history.at(-1)?.t ?? 0);
-  const top = Math.max(total, 1) * 1.05;
-  const x = (t: number) => (t / span) * (w - 2) + 1;
-  const y = (v: number) => h - 14 - (v / top) * (h - 20);
+/** The pump's set-point: the stage's flow while pouring, 0 between pours, none outside a recipe. */
+function targetFlowOf(s: Status): number | null {
+  if (s.state === 'pouring') return s.targetFlow ?? null;
+  return BREWING.has(s.state) && s.state !== 'calibrating' ? 0 : null;
+}
 
-  g.font = `11px ${cssVar('--font')}`;
-  g.fillStyle = cssVar('--ink-soft');
-  g.strokeStyle = cssVar('--line');
-  g.lineWidth = 1;
-  for (let t = 0; t <= span; t += 60) {
-    g.beginPath();
-    g.moveTo(x(t), h - 14);
-    g.lineTo(x(t), h - 8);
-    g.stroke();
-    g.fillText(`${t / 60}m`, Math.min(x(t) + 3, w - 18), h - 1);
-  }
+function stageTargets(): number[] {
+  const st = app.status.state;
+  if (!(BREWING.has(st) || st === 'done') || st === 'calibrating') return [];
   let cum = 0;
-  g.setLineDash([3, 4]);
-  for (const st of recipe?.stages ?? []) {
-    cum += +st.water || 0;
-    g.beginPath();
-    g.moveTo(0, y(cum));
-    g.lineTo(w, y(cum));
-    g.stroke();
-  }
-  g.setLineDash([]);
+  return (activeRecipe()?.stages ?? []).filter((x) => x.water > 0).map((x) => (cum += x.water));
+}
 
-  if (app.history.length > 1) {
-    g.strokeStyle = cssVar('--water');
-    g.lineWidth = 2.5;
-    g.lineJoin = 'round';
-    g.beginPath();
-    app.history.forEach((p, i) => (i ? g.lineTo(x(p.t), y(p.w)) : g.moveTo(x(p.t), y(p.w))));
-    g.stroke();
+function brewSpan(): number {
+  const st = app.status.state;
+  const r = activeRecipe();
+  return (BREWING.has(st) || st === 'done') && st !== 'calibrating' && r ? brewSeconds(r) * 1.05 : 0;
+}
+
+let charts: TimeChart[] = [];
+let nozzleCharts: NozzleChart[] = [];
+
+function setupCharts() {
+  const card = (id: string) => [$<HTMLCanvasElement>(`#${id}`), $(`#${id} + .chart-tip`)] as const;
+  const water = (id: string, withTargets: boolean) =>
+    new TimeChart(...card(id), {
+      series: [{ label: 'Poured', color: '--series-water', value: (x) => x.poured, fill: true }],
+      unit: 'g',
+      decimals: 1,
+      minTop: 20,
+      references: withTargets ? stageTargets : undefined,
+      spanHint: brewSpan,
+    });
+  const flow = (id: string) =>
+    new TimeChart(...card(id), {
+      series: [
+        { label: 'Measured', color: '--series-flow', value: (x) => x.flow },
+        { label: 'Target', color: '--ink-soft', value: (x) => x.targetFlow, dashed: true, step: true },
+      ],
+      unit: 'g/s',
+      decimals: 2,
+      minTop: 2,
+      spanHint: brewSpan,
+    });
+  charts = [water('chart-water', true), flow('chart-flow'), water('chart-water-machine', false), flow('chart-flow-machine')];
+  nozzleCharts = ['nozzle-brew', 'nozzle-machine'].map(
+    (id) => new NozzleChart($<HTMLCanvasElement>(`#${id}`), $(`#${id}-readout`)),
+  );
+}
+
+function drawCharts() {
+  for (const c of charts) c.draw(app.history);
+  drawNozzles(performance.now());
+}
+
+/** Records the run (brew, calibration or priming) for the time charts. */
+function recordHistory(s: Status, prev: Status) {
+  const running = BREWING.has(s.state) || (s.duty ?? 0) > 0;
+  const wasRunning = BREWING.has(prev.state) || (prev.duty ?? 0) > 0;
+  if (running && !wasRunning) {
+    app.history = [];
+    runStart = performance.now();
+    // Brews and calibrations zero the meter; priming doesn't, so count from here.
+    runBase = BREWING.has(s.state) ? 0 : s.poured;
   }
+  if (!running) return;
+  // Brews report machine time; calibration and priming don't, so use ours.
+  const t = s.elapsed ?? (performance.now() - runStart) / 1000;
+  const last = app.history.at(-1);
+  if (!last || t - last.t >= 0.15) {
+    app.history.push({ t, poured: s.poured - runBase, flow: Math.max(0, s.flow), targetFlow: targetFlowOf(s) });
+  }
+}
+let runStart = 0;
+let runBase = 0;
+
+// The nozzle's path arrives 10 points at a time with each status; replaying
+// them at the rate they were sampled (50/s) animates it smoothly.
+const trail: TrailPoint[] = [];
+const pending: [number, number][] = [];
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let animating = false;
+let lastFrame = 0;
+let owed = 0;
+
+function queuePath(s: Status) {
+  if (!s.homed) {
+    trail.length = 0;
+    pending.length = 0;
+  }
+  pending.push(...(s.path ?? []));
+  if (reduceMotion.matches) {
+    const now = performance.now();
+    for (const [x, y] of pending.splice(0)) trail.push({ x, y, at: now });
+  }
+  if (!animating) {
+    animating = true;
+    lastFrame = performance.now();
+    requestAnimationFrame(animate);
+  }
+}
+
+function animate(now: number) {
+  // Catch up when behind (a slow link delivers bursts), without jumping.
+  owed += ((now - lastFrame) / 1000) * 50 * (1 + pending.length / 20);
+  lastFrame = now;
+  while (owed >= 1 && pending.length) {
+    const [x, y] = pending.shift()!;
+    trail.push({ x, y, at: now });
+    owed -= 1;
+  }
+  if (!pending.length) owed = 0;
+  while (trail.length > 1 && now - trail[0].at > TRAIL_MS) trail.shift();
+  drawNozzles(now);
+  const fading = trail.length > 1 && now - trail[0].at < TRAIL_MS;
+  if (pending.length || fading) requestAnimationFrame(animate);
+  else animating = false;
+}
+
+/** The radius of the pattern being poured, drawn as a guide. */
+function patternRing(): number | null {
+  const s = app.status;
+  if (s.state !== 'pouring' || s.stage == null) return null;
+  const st = activeRecipe()?.stages[s.stage];
+  return st && st.pattern !== 'center' ? st.radius : null;
+}
+
+function drawNozzles(now: number) {
+  const ring = patternRing();
+  for (const c of nozzleCharts) c.draw(trail, now, app.status.nozzle ?? null, ring);
 }
 
 function renderRecipeSelect() {
@@ -490,7 +564,7 @@ function showView(name: string) {
     if (b.dataset.view === name) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   }
-  if (name === 'brew') requestAnimationFrame(() => drawChart(activeRecipe(), app.status.total ?? 0));
+  requestAnimationFrame(drawCharts);
 }
 
 function bind() {
@@ -594,7 +668,7 @@ function bind() {
     }
   });
 
-  window.addEventListener('resize', () => drawChart(activeRecipe(), app.status.total ?? 0));
+  window.addEventListener('resize', drawCharts);
 }
 
 async function main() {
@@ -604,6 +678,7 @@ async function main() {
     Object.assign(app, createMock());
     document.title = 'OpenPour (simulator)';
   }
+  setupCharts();
   bind();
   await loadSettings();
   await loadRecipes();

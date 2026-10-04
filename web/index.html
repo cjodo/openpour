@@ -42,7 +42,33 @@
 
       <ol id="stages" class="stages" aria-label="Recipe stages"></ol>
 
-      <canvas id="chart" class="chart" height="140" aria-label="Water poured over time"></canvas>
+      <section class="charts" aria-label="Live charts">
+        <figure class="chart-card">
+          <figcaption class="chart-head"><span class="chart-title">Water poured (g)</span>
+            <span class="legend"><span><i class="key" style="--key: var(--series-water)"></i>Poured</span><span><i class="key dotted" style="--key: var(--ink-soft)"></i>Stage targets</span></span>
+          </figcaption>
+          <div class="chart-wrap">
+            <canvas id="chart-water" class="chart" role="img" aria-label="Water poured over time, in grams"></canvas>
+            <div class="chart-tip" hidden></div>
+          </div>
+        </figure>
+        <figure class="chart-card">
+          <figcaption class="chart-head"><span class="chart-title">Flow rate (g/s)</span>
+            <span class="legend"><span><i class="key" style="--key: var(--series-flow)"></i>Measured</span><span><i class="key dashed" style="--key: var(--ink-soft)"></i>Target</span></span>
+          </figcaption>
+          <div class="chart-wrap">
+            <canvas id="chart-flow" class="chart" role="img" aria-label="Flow rate over time, measured and target, in grams per second"></canvas>
+            <div class="chart-tip" hidden></div>
+          </div>
+        </figure>
+        <figure class="chart-card chart-nozzle">
+          <figcaption class="chart-head"><span class="chart-title">Nozzle position</span>
+            <span class="legend"><span><i class="key" style="--key: var(--series-flow)"></i>Path</span><span><i class="key dashed" style="--key: var(--ink-soft)"></i>Pattern</span></span>
+          </figcaption>
+          <canvas id="nozzle-brew" class="nozzle-canvas" role="img" aria-label="Nozzle position over the dripper, seen from above"></canvas>
+          <p id="nozzle-brew-readout" class="chart-readout" aria-live="off"></p>
+        </figure>
+      </section>
 
       <p id="brew-error" class="alert" hidden></p>
 
@@ -110,6 +136,39 @@
           <button data-cmd="release" class="quiet">Motors off</button>
         </div>
         <p class="readout-line">Arm: <span id="motion-state">–</span></p>
+        <div class="charts charts-single">
+          <figure class="chart-card chart-nozzle">
+          <figcaption class="chart-head"><span class="chart-title">Nozzle position</span>
+            <span class="legend"><span><i class="key" style="--key: var(--series-flow)"></i>Path</span><span><i class="key dashed" style="--key: var(--ink-soft)"></i>Pattern</span></span>
+          </figcaption>
+          <canvas id="nozzle-machine" class="nozzle-canvas" role="img" aria-label="Nozzle position over the dripper, seen from above"></canvas>
+          <p id="nozzle-machine-readout" class="chart-readout" aria-live="off"></p>
+          <p class="hint">The cross is the saved centre. Jog until the dot sits over the middle of the dripper, then save.</p>
+          </figure>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Live readings</h2>
+        <p class="hint">What the flow meter measures while priming, calibrating or brewing.</p>
+        <div class="charts charts-pair">
+        <figure class="chart-card">
+          <figcaption class="chart-head"><span class="chart-title">Water through the meter (g)</span></figcaption>
+          <div class="chart-wrap">
+            <canvas id="chart-water-machine" class="chart" role="img" aria-label="Water counted by the flow meter over time, in grams"></canvas>
+            <div class="chart-tip" hidden></div>
+          </div>
+        </figure>
+        <figure class="chart-card">
+          <figcaption class="chart-head"><span class="chart-title">Flow rate (g/s)</span>
+            <span class="legend"><span><i class="key" style="--key: var(--series-flow)"></i>Measured</span><span><i class="key dashed" style="--key: var(--ink-soft)"></i>Target</span></span>
+          </figcaption>
+          <div class="chart-wrap">
+            <canvas id="chart-flow-machine" class="chart" role="img" aria-label="Flow rate over time, measured and target, in grams per second"></canvas>
+            <div class="chart-tip" hidden></div>
+          </div>
+        </figure>
+        </div>
       </div>
 
       <div class="panel">

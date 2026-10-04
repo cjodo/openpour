@@ -11,6 +11,8 @@ const TICK_MS = 50;
 const REAL_PUMP_GPS = 6.6;   // what the "real" pump does at full power
 const REAL_METER_PPL = 2010; // what the "real" flow meter does (settings start at the datasheet value)
 const METER_LAG_S = 0.1;     // pump coast-down after it is switched off
+/** The park pose (r 80 mm, θ -60°) relative to the default centre (r 110 mm, θ 0°). */
+const PARK: [number, number] = [80 * Math.cos(-Math.PI / 3) - 110, 80 * Math.sin(-Math.PI / 3)];
 
 export function createMock(): Transport {
   const settings: Settings = {
@@ -36,6 +38,11 @@ export function createMock(): Transport {
     calKind: '' as '' | 'pump' | 'meter',
     coast: 0,
     hist: [] as { t: number; w: number }[],
+    // Nozzle, in mm from the dripper centre (x away from the pivot), and where it's heading.
+    nozzle: [...PARK] as [number, number],
+    goal: [...PARK] as [number, number],
+    path: [] as [number, number][],
+    sinceSample: 0,
   };
 
   async function ensureRecipes(): Promise<Recipe[]> {
@@ -67,16 +74,51 @@ export function createMock(): Transport {
     sim.stage = i;
     sim.target += stage().water;
     sim.motion = 'pouring';
+    sim.goal = [0, 0]; // waits happen over the centre
     enter(stage().water > 0 ? 'pouring' : 'waiting');
   }
 
   function finish() {
     sim.duty = 0;
     sim.motion = 'moving';
+    sim.goal = [...PARK];
     enter('finishing');
   }
 
+  /** Where the nozzle should be: the pattern while pouring, else its goal. Mirrors pourcore's pattern_at. */
+  function nozzleTarget(): [number, number] {
+    if (sim.state !== 'pouring') return sim.goal;
+    const { pattern, radius, rps } = stage();
+    const phi = 2 * Math.PI * rps * sim.inState;
+    let rho = 0;
+    if (pattern === 'circle') rho = radius;
+    if (pattern === 'spiral') {
+      const sweep = 3 / Math.max(rps, 0.05);
+      const u = (sim.inState % (2 * sweep)) / sweep;
+      rho = radius * (u <= 1 ? u : 2 - u);
+    }
+    return [rho * Math.cos(phi), rho * Math.sin(phi)];
+  }
+
+  function moveNozzle(dt: number) {
+    if (!sim.homed) return;
+    const [tx, ty] = nozzleTarget();
+    const [x, y] = sim.nozzle;
+    const d = Math.hypot(tx - x, ty - y);
+    const max = sim.state === 'pouring' ? Infinity : 150 * dt; // travel moves at 150 mm/s
+    const k = d > max ? max / d : 1;
+    sim.nozzle = [x + (tx - x) * k, y + (ty - y) * k];
+    sim.sinceSample += dt;
+    if (sim.sinceSample >= 0.02) {
+      sim.sinceSample = 0;
+      const last = sim.path.at(-1) ?? [Infinity, Infinity];
+      if (Math.hypot(sim.nozzle[0] - last[0], sim.nozzle[1] - last[1]) >= 0.05) sim.path.push([...sim.nozzle]);
+      if (sim.path.length > 50) sim.path.shift();
+    }
+  }
+
   function step(dt: number) {
+    moveNozzle(dt);
     sim.inState += dt;
     sim.temp = Math.max(70, sim.temp - 0.004 * dt);
 
@@ -169,6 +211,11 @@ export function createMock(): Transport {
     }
     if (sim.error) s.error = sim.error;
     if (sim.message) s.message = sim.message;
+    if (sim.homed) {
+      const r1 = (v: number) => Math.round(v * 10) / 10;
+      s.nozzle = [r1(sim.nozzle[0]), r1(sim.nozzle[1])];
+      s.path = sim.path.splice(0).map(([x, y]) => [r1(x), r1(y)]);
+    }
     return s;
   }
 
@@ -213,12 +260,30 @@ export function createMock(): Transport {
     }
     if (active()) return notify('error', "That isn't available while brewing.");
     switch (c.cmd) {
-      case 'home': sim.motion = 'homing'; setTimeout(() => { sim.homed = true; sim.motion = 'holding'; }, 2500 / SPEED); return;
+      case 'home':
+        sim.motion = 'homing';
+        setTimeout(() => {
+          sim.homed = true;
+          sim.motion = 'holding';
+          sim.nozzle = [...PARK];
+          sim.goal = [...PARK];
+        }, 2500 / SPEED);
+        return;
       case 'park': case 'center': case 'jog':
         if (!sim.homed) return notify('error', 'Home the arm first.');
         sim.motion = 'holding';
+        if (c.cmd === 'park') sim.goal = [...PARK];
+        if (c.cmd === 'center') sim.goal = [0, 0];
+        if (c.cmd === 'jog') {
+          sim.goal = [sim.goal[0] + c.dr, sim.goal[1] + settings.centerR * c.dtheta * (Math.PI / 180)];
+        }
         return;
-      case 'setCenter': return notify('info', 'Dripper centre saved.');
+      case 'setCenter':
+        // The nozzle's position becomes the new centre.
+        sim.goal = [sim.goal[0] - sim.nozzle[0], sim.goal[1] - sim.nozzle[1]];
+        sim.nozzle = [0, 0];
+        sim.path.length = 0;
+        return notify('info', 'Dripper centre saved.');
       case 'release': sim.homed = false; sim.motion = 'released'; return;
       case 'prime': sim.duty = c.duty ?? 1; sim.primeLeft = c.seconds ?? 3; return;
       case 'calMeter': {

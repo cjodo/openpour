@@ -75,6 +75,10 @@ export interface Status {
   temp?: number;
   motion?: string;
   homed?: boolean;
+  /** Nozzle (x, y) in mm from the saved dripper centre; x is away from the pivot. Only once homed. */
+  nozzle?: [number, number];
+  /** The nozzle's positions since the last status, sampled at 50 Hz, oldest first. */
+  path?: [number, number][];
   error?: string;
   message?: string;
   // Only while a recipe is running or just finished:
