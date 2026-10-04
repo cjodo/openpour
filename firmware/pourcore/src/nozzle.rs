@@ -1,7 +1,7 @@
 //! Where the nozzle is, relative to the dripper centre, for the app's
-//! position chart. Status messages go out 5 times a second, too coarse to
-//! draw a spiral, so `Trail` samples at 50 Hz and each status carries the
-//! points since the last one.
+//! position chart. Status messages are too coarse to draw a spiral, so
+//! `Trail` samples at 50 Hz and each status carries the points since the last
+//! one, each with its age so the app can replay them at the right moments.
 
 use serde_json::{json, Value};
 
@@ -37,7 +37,8 @@ pub fn to_json((x, y): (f32, f32)) -> Value {
 #[derive(Default)]
 pub struct Trail {
     last_ms: u32,
-    points: Vec<(f32, f32)>,
+    /// (machine ms, x, y)
+    points: Vec<(u32, f32, f32)>,
     last: Option<(f32, f32)>,
 }
 
@@ -59,13 +60,19 @@ impl Trail {
         if self.points.len() == MAX_POINTS {
             self.points.remove(0);
         }
-        self.points.push(p);
+        self.points.push((now, p.0, p.1));
         self.last = Some(p);
     }
 
-    /// The points since the last call, oldest first, as `[[x, y], ...]`.
-    pub fn take_json(&mut self) -> Value {
-        Value::Array(self.points.drain(..).map(to_json).collect())
+    /// The points since the last call, oldest first, as `[[x, y, age_ms], ...]`
+    /// where the age is relative to `now` (the status message's `ms`).
+    pub fn take_json(&mut self, now: u32) -> Value {
+        Value::Array(
+            self.points
+                .drain(..)
+                .map(|(ms, x, y)| json!([round1(x), round1(y), now.wrapping_sub(ms)]))
+                .collect(),
+        )
     }
 }
 
@@ -94,8 +101,10 @@ mod tests {
             m.tick(10);
             t.update(&m);
         }
-        // Standing still: one point, then nothing new.
-        assert_eq!(t.take_json().as_array().unwrap().len(), 1);
-        assert_eq!(t.take_json(), json!([]));
+        // Standing still: one point (stamped with its age), then nothing new.
+        let pts = t.take_json(m.now);
+        assert_eq!(pts.as_array().unwrap().len(), 1);
+        assert_eq!(pts[0][2], json!(m.now - 20)); // first sample at 20 ms
+        assert_eq!(t.take_json(m.now), json!([]));
     }
 }
