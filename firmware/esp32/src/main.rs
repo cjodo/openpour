@@ -50,6 +50,8 @@ use crate::stepper::Stepper;
 
 const STATUS_PERIOD_MS: u32 = 200;
 const REBOOT_DELAY_MS: u32 = 1500;
+/// A loop iteration longer than this is logged: it delays motion and flow control.
+const LOOP_STALL_MS: u32 = 50;
 
 fn millis() -> u32 {
     (unsafe { esp_timer_get_time() } / 1000) as u32
@@ -265,9 +267,17 @@ fn main() -> anyhow::Result<()> {
     let mut button_state = Button::default();
     let mut last_status_ms = 0u32;
     let mut reboot_at: Option<u32> = None;
+    let mut last_loop_ms = millis();
+    let mut last_stall_log_ms = 0u32;
 
     loop {
         let now = millis();
+        let gap = now.wrapping_sub(last_loop_ms);
+        last_loop_ms = now;
+        if gap > LOOP_STALL_MS && now.wrapping_sub(last_stall_log_ms) >= 1000 {
+            last_stall_log_ms = now;
+            log::warn!(target: "loop", "main loop stalled {gap} ms");
+        }
         dev.update(now);
         brew.update(&mut dev);
 
@@ -280,7 +290,7 @@ fn main() -> anyhow::Result<()> {
         }
         for fx in effects {
             match fx {
-                Effect::Notify { kind, msg } => dev.net.broadcast(&Effect::notify_json(kind, &msg)),
+                Effect::Notify { kind, msg } => dev.net.send_event(Effect::notify_json(kind, &msg)),
                 Effect::Reboot => reboot_at = Some(now.wrapping_add(REBOOT_DELAY_MS)),
             }
         }
@@ -289,7 +299,7 @@ fn main() -> anyhow::Result<()> {
 
         if dev.net.wants_status() || now.wrapping_sub(last_status_ms) >= STATUS_PERIOD_MS {
             last_status_ms = now;
-            dev.net.broadcast(&brew.status(&dev).to_string());
+            dev.net.send_status(brew.status(&dev).to_string());
         }
         if reboot_at.is_some_and(|t| now.wrapping_sub(t) as i32 >= 0) {
             reset::restart();
