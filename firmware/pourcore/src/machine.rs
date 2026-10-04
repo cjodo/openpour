@@ -56,6 +56,8 @@ pub trait Machine {
     fn homing_failed(&self) -> bool;
     fn motion_busy(&self) -> bool;
     fn motion_mode(&self) -> &'static str;
+    /// Current arm angle (degrees) and carriage radius (mm), for telemetry.
+    fn arm_pose(&self) -> (f32, f32);
 
     fn ap_mode(&self) -> bool;
 }

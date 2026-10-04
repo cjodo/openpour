@@ -2,6 +2,8 @@
 //! carriage along the arm). Both axes run in velocity mode so the nozzle can
 //! follow continuously changing patterns, including direction reversals.
 
+use log::{debug, error, info};
+
 use crate::kinematics::{bed_to_arm, ArmPose, BedPoint};
 use crate::pattern::{pattern_at, PatternParams};
 use crate::settings::Settings;
@@ -33,6 +35,8 @@ const KP: f32 = 15.0;
 const MIN_HZ: f32 = 20.0;
 /// Steps.
 const DEADBAND: f32 = 2.0;
+/// Log target for everything here.
+const T: &str = "motion";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
@@ -162,6 +166,13 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
 
     fn homing_step(&mut self, now: u32, s: &Settings, end: Endstops) {
         if now.wrapping_sub(self.home_start_ms) > HOME_TIMEOUT_MS {
+            error!(
+                target: T,
+                "homing timed out after {HOME_TIMEOUT_MS} ms waiting for the {:?} endstop (switches: radial {}, theta {})",
+                self.home_step,
+                end.radial,
+                end.theta
+            );
             self.theta.force_stop_at(0);
             self.radial.force_stop_at(0);
             self.home_failed = true;
@@ -171,6 +182,12 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
         match self.home_step {
             HomeStep::Radial => {
                 if end.radial {
+                    info!(
+                        target: T,
+                        "radial endstop hit after {} ms, {} steps travelled",
+                        now.wrapping_sub(self.home_start_ms),
+                        self.radial.position()
+                    );
                     self.radial.force_stop_at((s.radial_home_mm * s.radial_steps_per_mm).round() as i32);
                     self.home_step = HomeStep::Theta;
                     self.theta.run_at(-HOME_DEG_S * s.theta_steps_per_deg);
@@ -178,6 +195,7 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
             }
             HomeStep::Theta => {
                 if end.theta {
+                    info!(target: T, "theta endstop hit; homed in {} ms", now.wrapping_sub(self.home_start_ms));
                     self.theta.force_stop_at((s.theta_home_deg * s.theta_steps_per_deg).round() as i32);
                     self.homed = true;
                     self.park(s);
@@ -202,6 +220,7 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
     }
 
     pub fn home(&mut self, now: u32, s: &Settings) {
+        info!(target: T, "homing: radial first, then theta");
         self.homed = false;
         self.home_failed = false;
         (self.enable)(true);
@@ -235,9 +254,20 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
 
     pub fn move_to(&mut self, target: ArmPose, s: &Settings) {
         if !self.homed {
+            debug!(target: T, "move ignored: not homed");
             return;
         }
         self.hold_target = clamp_pose(target, s);
+        if self.hold_target != target {
+            info!(
+                target: T,
+                "target r={:.1} mm θ={:.1}° clamped to r={:.1} θ={:.1} by the axis limits",
+                target.r,
+                target.theta_deg,
+                self.hold_target.r,
+                self.hold_target.theta_deg
+            );
+        }
         self.mode = Mode::Hold;
     }
 
@@ -292,6 +322,9 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
 
     /// De-energises the motors (position is lost).
     pub fn release(&mut self) {
+        if self.mode != Mode::Released {
+            debug!(target: T, "motors released");
+        }
         self.theta.stop();
         self.radial.stop();
         (self.enable)(false);

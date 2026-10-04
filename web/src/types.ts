@@ -35,6 +35,8 @@ export interface Settings {
   pumpGpsAtFull: number;
   pumpMinDuty: number;
   pumpLagS: number;
+  telemetryHz: number;
+  logDebug: boolean;
   thetaStepsPerDeg: number;
   radialStepsPerMm: number;
   invertTheta: boolean;

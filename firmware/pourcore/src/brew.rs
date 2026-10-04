@@ -2,6 +2,7 @@
 //! cumulative target with the stage's flow rate and pattern, wait, and finally
 //! park. Also runs the pump and flow-meter calibration dispenses.
 
+use log::{debug, error, info, warn};
 use serde_json::{json, Map, Value};
 
 use crate::flow::{should_stop_pour, FlowController};
@@ -22,6 +23,10 @@ const PUMP_CAL_SETTLE_MS: u32 = 2000;
 const METER_CAL_G: f32 = 200.0;
 /// ... or runs this long, whichever comes first.
 const METER_CAL_MAX_MS: u32 = 60_000;
+/// Controller internals are logged at debug level this often while pouring.
+const DEBUG_PERIOD_MS: u32 = 500;
+/// Log target for everything here.
+const T: &str = "brew";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -67,6 +72,15 @@ enum CalKind {
     Meter,
 }
 
+impl CalKind {
+    fn name(self) -> &'static str {
+        match self {
+            CalKind::Pump => "pump",
+            CalKind::Meter => "meter",
+        }
+    }
+}
+
 pub struct Brew {
     st: State,
     paused_from: State,
@@ -85,6 +99,7 @@ pub struct Brew {
     fc: FlowController,
     cal_step: CalStep,
     cal_kind: CalKind,
+    last_debug_ms: u32,
     error: String,
     message: String,
 }
@@ -108,6 +123,7 @@ impl Default for Brew {
             fc: FlowController::default(),
             cal_step: CalStep::Prepare,
             cal_kind: CalKind::Pump,
+            last_debug_ms: 0,
             error: String::new(),
             message: String::new(),
         }
@@ -124,16 +140,60 @@ impl Brew {
         !matches!(self.st, State::Idle | State::Done | State::Error)
     }
 
+    /// 1-based number of the current stage, 0 outside a recipe.
+    pub fn stage_number(&self) -> usize {
+        let in_recipe = !matches!(self.st, State::Idle | State::Calibrating) && !self.recipe.stages.is_empty();
+        if in_recipe { self.stage_idx + 1 } else { 0 }
+    }
+
+    /// Cumulative grams the current stage pours to (0 outside a recipe).
+    pub fn stage_target(&self) -> f32 {
+        if self.stage_number() > 0 { self.stage_target } else { 0.0 }
+    }
+
+    /// The flow rate being asked of the pump right now.
+    pub fn target_flow(&self) -> f32 {
+        if self.st == State::Pouring { self.stage().flow_gps } else { 0.0 }
+    }
+
+    /// "pump" or "meter" while a calibration runs.
+    pub fn calibration_kind(&self) -> Option<&'static str> {
+        (self.st == State::Calibrating).then(|| self.cal_kind.name())
+    }
+
+    /// The running recipe, for logs and telemetry headers.
+    pub fn recipe_json(&self) -> Value {
+        let r = &self.recipe;
+        json!({
+            "id": r.id,
+            "name": r.name,
+            "minTemp": r.min_temp_c,
+            "stages": r.stages.iter().map(|s| json!({
+                "name": s.name,
+                "water": s.water_g,
+                "flow": s.flow_gps,
+                "pattern": s.pattern.kind.name(),
+                "radius": s.pattern.radius_mm,
+                "rps": s.pattern.rps,
+                "wait": s.wait_s,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
     fn stage(&self) -> &Stage {
         &self.recipe.stages[self.stage_idx]
     }
 
     fn enter(&mut self, s: State, now: u32) {
+        if s != self.st {
+            info!(target: T, "{} -> {}", self.st.name(), s.name());
+        }
         self.st = s;
         self.state_start_ms = now;
     }
 
     fn fail(&mut self, m: &mut impl Machine, msg: &str) {
+        error!(target: T, "{msg}");
         m.pump_off();
         m.motion(MotionCmd::Hold);
         self.error = msg.to_owned();
@@ -151,6 +211,20 @@ impl Brew {
         self.fc.gps_at_full = m.settings().pump_gps_at_full;
         self.fc.min_duty = m.settings().pump_min_duty;
         self.fc.reset();
+        let st = self.stage();
+        info!(
+            target: T,
+            "stage {}/{} \"{}\": +{} g to {} g at {} g/s, {} r={} mm, then wait {} s",
+            i + 1,
+            self.recipe.stages.len(),
+            st.name,
+            st.water_g,
+            self.stage_target,
+            st.flow_gps,
+            st.pattern.kind.name(),
+            st.pattern.radius_mm,
+            st.wait_s
+        );
         if self.stage().water_g <= 0.0 {
             m.motion(MotionCmd::MoveToBed(BedPoint::CENTRE));
             self.enter(State::Waiting, m.now_ms());
@@ -159,6 +233,19 @@ impl Brew {
         m.motion(MotionCmd::Follow(self.stage().pattern));
         self.reset_flow_watchdog(m);
         self.enter(State::Pouring, m.now_ms());
+    }
+
+    /// Logged when a stage's wait ends: where the water really settled.
+    fn log_stage_result(&self, m: &impl Machine) {
+        let w = m.grams();
+        info!(
+            target: T,
+            "stage {} settled at {:.1} g (target {:.1}, {:+.1} g)",
+            self.stage_idx + 1,
+            w,
+            self.stage_target,
+            w - self.stage_target
+        );
     }
 
     fn finish(&mut self, m: &mut impl Machine, to_idle: bool) {
@@ -186,6 +273,19 @@ impl Brew {
         self.stage_target = 0.0;
         self.elapsed_ms = 0;
         self.prep_moved = false;
+        info!(
+            target: T,
+            "start \"{}\" ({}): {} stages, {} g, min {} °C, water {}",
+            self.recipe.name,
+            self.recipe.id,
+            self.recipe.stages.len(),
+            self.recipe.total_water(),
+            self.recipe.min_temp_c,
+            m.temp_c().map_or("unknown".into(), |t| format!("{t:.1} °C"))
+        );
+        if let Some(t) = m.temp_c().filter(|t| *t < self.recipe.min_temp_c) {
+            warn!(target: T, "water is {t:.1} °C, below the recipe's {} °C", self.recipe.min_temp_c);
+        }
         m.reset_poured();
         if !m.homed() {
             m.motion(MotionCmd::Home);
@@ -213,6 +313,7 @@ impl Brew {
         self.prep_moved = false;
         self.cal_step = CalStep::Prepare;
         self.cal_kind = kind;
+        info!(target: T, "{} calibration started", kind.name());
         m.reset_poured();
         if !m.homed() {
             m.motion(MotionCmd::Home);
@@ -225,6 +326,7 @@ impl Brew {
         if !matches!(self.st, State::Pouring | State::Waiting | State::Preparing) {
             return;
         }
+        info!(target: T, "paused while {} at {:.1} g", self.st.name(), m.grams());
         m.pump_off();
         m.motion(MotionCmd::Hold);
         self.paused_from = self.st;
@@ -236,6 +338,7 @@ impl Brew {
         if self.st != State::Paused {
             return;
         }
+        info!(target: T, "resumed {}", self.paused_from.name());
         self.st = self.paused_from;
         self.state_start_ms = m.now_ms().wrapping_sub(self.paused_in_state_ms);
         match self.st {
@@ -254,6 +357,7 @@ impl Brew {
             self.error.clear();
             self.enter(State::Idle, m.now_ms());
         } else if self.active() {
+            info!(target: T, "stopped by the user while {} at {:.1} g", self.st.name(), m.grams());
             self.finish(m, true);
         }
     }
@@ -281,10 +385,23 @@ impl Brew {
         let f = m.flow_gps();
 
         if w > self.recipe.total_water() + OVERFLOW_MARGIN_G {
+            error!(
+                target: T,
+                "overflow guard: {w:.1} g counted, limit {:.1} g (recipe {} + {OVERFLOW_MARGIN_G})",
+                self.recipe.total_water() + OVERFLOW_MARGIN_G,
+                self.recipe.total_water()
+            );
             self.fail(m, "The flow meter counted more water than the recipe holds. Stopped to prevent an overflow.");
             return;
         }
-        if should_stop_pour(w, f, m.settings().pump_lag_s, self.stage_target) {
+        let lag = m.settings().pump_lag_s;
+        if should_stop_pour(w, f, lag, self.stage_target) {
+            info!(
+                target: T,
+                "stage {} pump off at {w:.1} g, flow {f:.2} g/s, lead {lag} s (target {:.1})",
+                self.stage_idx + 1,
+                self.stage_target
+            );
             m.pump_off();
             m.motion(MotionCmd::MoveToBed(BedPoint::CENTRE));
             self.enter(State::Waiting, now);
@@ -294,9 +411,25 @@ impl Brew {
         let target = self.stage().flow_gps;
         let duty = self.fc.update(target, f, settled, dt as f32 / 1000.0);
         m.pump_set(duty);
+        if now.wrapping_sub(self.last_debug_ms) >= DEBUG_PERIOD_MS {
+            self.last_debug_ms = now;
+            debug!(
+                target: "flow",
+                "target {target} g/s, measured {f:.2} (settled {settled}), duty {duty:.3}, integral {:+.3}, {:.1} g to go",
+                self.fc.integral(),
+                self.stage_target - (w + f.max(0.0) * lag)
+            );
+        }
 
         if now.wrapping_sub(self.flow_check_ms) >= NO_FLOW_MS {
             if w - self.flow_check_g < NO_FLOW_MIN_G {
+                error!(
+                    target: T,
+                    "dry-flow watchdog: {:.1} g in {} ms (need {NO_FLOW_MIN_G}) at duty {duty:.2}, {} pulses",
+                    w - self.flow_check_g,
+                    now.wrapping_sub(self.flow_check_ms),
+                    m.meter_pulses()
+                );
                 self.fail(m, "No water is flowing. Refill the reservoir or check the pump tubing and flow meter.");
                 return;
             }
@@ -320,6 +453,7 @@ impl Brew {
                     CalKind::Meter => m.grams() >= METER_CAL_G || ran >= METER_CAL_MAX_MS,
                 };
                 if done {
+                    info!(target: T, "calibration run ended after {ran} ms with {:.1} g counted", m.grams());
                     m.pump_off();
                     self.cal_step = CalStep::Settle;
                     self.state_start_ms = now;
@@ -336,11 +470,13 @@ impl Brew {
                 match self.cal_kind {
                     CalKind::Pump => {
                         let gps = m.grams() / (PUMP_CAL_MS as f32 / 1000.0);
+                        info!(target: "cal", "pump: {gps:.3} g/s at full power (was {:.3})", m.settings().pump_gps_at_full);
                         m.settings_mut().pump_gps_at_full = gps;
                         m.save_settings();
                         self.message = format!("Pump calibrated at {gps:.2} g/s.");
                     }
                     CalKind::Meter => {
+                        info!(target: "cal", "meter: dispensed {:.1} g by count ({} pulses); waiting for the measured amount", m.grams(), m.meter_pulses());
                         self.message = format!(
                             "The meter counted {:.0} ml. Weigh or measure the water and enter the real amount.",
                             m.grams()
@@ -369,6 +505,7 @@ impl Brew {
             State::Waiting => {
                 self.elapsed_ms += dt;
                 if now.wrapping_sub(self.state_start_ms) >= (self.stage().wait_s * 1000.0) as u32 {
+                    self.log_stage_result(m);
                     if self.stage_idx + 1 < self.recipe.stages.len() {
                         self.begin_stage(m, self.stage_idx + 1);
                     } else {
@@ -442,7 +579,11 @@ impl Brew {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::FakeMachine;
+    use crate::fake::{capture_logs, logged, FakeMachine};
+
+    fn has(lines: &[String], needle: &str) -> bool {
+        lines.iter().any(|l| l.contains(needle))
+    }
 
     fn run(b: &mut Brew, m: &mut FakeMachine, ms: u32) {
         for _ in 0..ms / 10 {
@@ -453,6 +594,7 @@ mod tests {
 
     #[test]
     fn brews_a_recipe_to_its_targets() {
+        capture_logs();
         let mut m = FakeMachine::default();
         let mut b = Brew::default();
         b.start(&mut m, "v60-single").unwrap();
@@ -465,6 +607,14 @@ mod tests {
         assert!(!m.homed());
         b.stop(&mut m);
         assert_eq!(b.state(), State::Idle);
+
+        let log = logged();
+        assert!(has(&log, "INFO brew: start \"V60 single cup\""), "{log:#?}");
+        assert!(has(&log, "INFO brew: stage 1/"));
+        assert!(has(&log, "pump off at"));
+        assert!(has(&log, "INFO brew: stage 1 settled at"));
+        assert!(has(&log, "INFO brew: finishing -> done"));
+        assert!(has(&log, "DEBUG flow: target"));
     }
 
     #[test]
@@ -488,6 +638,7 @@ mod tests {
 
     #[test]
     fn dry_pump_is_an_error() {
+        capture_logs();
         let mut m = FakeMachine { dry: true, ..Default::default() };
         let mut b = Brew::default();
         b.start(&mut m, "v60-single").unwrap();
@@ -495,6 +646,9 @@ mod tests {
         assert_eq!(b.state(), State::Error);
         assert!(b.status(&m)["error"].as_str().unwrap().contains("No water"));
         assert_eq!(m.pump_duty, 0.0);
+        let log = logged();
+        assert!(has(&log, "ERROR brew: dry-flow watchdog: 0.0 g in 5000 ms"), "{log:#?}");
+        assert!(has(&log, "-> error"));
     }
 
     #[test]

@@ -16,6 +16,7 @@ export function createMock(): Transport {
   const settings: Settings = {
     hostname: 'openpour', lastRecipe: '', wifiSsid: '', apMode: true,
     flowPulsesPerLitre: 1925, pumpGpsAtFull: 6.0, pumpMinDuty: 0.25, pumpLagS: 0.15,
+    telemetryHz: 10, logDebug: false,
     thetaStepsPerDeg: 8.889, radialStepsPerMm: 80, invertTheta: false, invertRadial: false,
     thetaHomeDeg: -75, radialHomeMm: 66, thetaMinDeg: -78, thetaMaxDeg: 25,
     radialMinMm: 66, radialMaxMm: 175, centerR: 110, centerThetaDeg: 0, parkR: 80, parkThetaDeg: -60,

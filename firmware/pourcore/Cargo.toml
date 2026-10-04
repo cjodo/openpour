@@ -2,8 +2,9 @@
 name = "pourcore"
 version = "0.1.0"
 edition = "2021"
-description = "Hardware-independent OpenPour logic: kinematics, patterns, flow, scale filtering, motion, brewing"
+description = "Hardware-independent OpenPour logic: kinematics, patterns, flow, flow-meter counting, motion, brewing, logging"
 license = "MIT"
 
 [dependencies]
+log = "0.4"
 serde_json = "1"

@@ -23,6 +23,11 @@ pub struct Settings {
     /// Meter latency + pump coast-down when stopping.
     pub pump_lag_s: f32,
 
+    // Debugging. Telemetry samples per second during brews (1-50).
+    pub telemetry_hz: f32,
+    /// Log controller internals at debug level.
+    pub log_debug: bool,
+
     // Motion. Direct-drive theta (NEMA17, 1/16 microstep), GT2 20T radial belt.
     pub theta_steps_per_deg: f32,
     pub radial_steps_per_mm: f32,
@@ -55,6 +60,8 @@ impl Default for Settings {
             pump_gps_at_full: 6.0,
             pump_min_duty: 0.25,
             pump_lag_s: 0.15,
+            telemetry_hz: 10.0,
+            log_debug: false,
             theta_steps_per_deg: 200.0 * 16.0 / 360.0,
             radial_steps_per_mm: 200.0 * 16.0 / 40.0,
             invert_theta: false,
@@ -127,6 +134,8 @@ app_fields! {
     pump_gps_at_full => "pumpGpsAtFull",
     pump_min_duty => "pumpMinDuty",
     pump_lag_s => "pumpLagS",
+    telemetry_hz => "telemetryHz",
+    log_debug => "logDebug",
     theta_steps_per_deg => "thetaStepsPerDeg",
     radial_steps_per_mm => "radialStepsPerMm",
     invert_theta => "invertTheta",
