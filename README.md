@@ -43,7 +43,7 @@ just early enough that the pump's coast-down lands on target.
 |---|---|
 | `hardware/cad/` | OpenSCAD model. `config.scad` holds every dimension; `make` exports STLs |
 | `firmware/` | ESP32 firmware in Rust: `pourcore/` holds the hardware-independent logic, `esp32/` runs it on ESP-IDF |
-| `web/` | The control app: plain HTML/CSS/JS, embedded into the firmware at build time |
+| `web/` | The control app: TypeScript (`src/`) bundled with esbuild into `dist/`, which the firmware embeds at build time |
 | `docs/` | [BOM](docs/BOM.md), [wiring](docs/wiring.md), [assembly](docs/assembly.md), [calibration](docs/calibration.md) |
 
 ## Build it
@@ -53,7 +53,8 @@ just early enough that the pump's coast-down lands on target.
 2. **Buy.** See the [bill of materials](docs/BOM.md). It comes to about
    US$170–210 (CA$240–300, €150–190).
 3. **Wire.** See [wiring](docs/wiring.md).
-4. **Flash.** Install the Rust ESP32 toolchain once:
+4. **Flash.** Install [Node.js](https://nodejs.org) 18 or newer (the
+   firmware build compiles the web app), and the Rust ESP32 toolchain once:
    ```sh
    cargo install espup ldproxy espflash
    espup install --targets esp32     # writes ~/export-esp.sh
@@ -64,7 +65,7 @@ just early enough that the pump's coast-down lands on target.
    ```sh
    source ~/export-esp.sh
    cd firmware/esp32
-   cargo run --release    # builds, flashes firmware + web app, opens the monitor
+   cargo run --release    # builds the web app and firmware, flashes, opens the monitor
    ```
    The first build downloads ESP-IDF, so it takes a while. The serial
    monitor shows the address to open. On Linux, add yourself to the group
@@ -77,12 +78,16 @@ just early enough that the pump's coast-down lands on target.
 
 ```sh
 cd web
-python3 -m http.server 8000
+npm ci
+npm run dev
 # open http://localhost:8000/?mock          (add &speed=4 to fast-forward)
 ```
 
-`mock.js` simulates the machine with the same REST and WebSocket protocol as
-the firmware, so recipes, brewing and calibration all work in the browser.
+`src/mock.ts` simulates the machine with the same REST and WebSocket protocol
+as the firmware, so recipes, brewing and calibration all work in the browser.
+Edits to `src/` take effect on reload. The protocol's types live in
+`src/types.ts`. Before committing, run `npm run typecheck` (`npm run build`
+also runs it). The simulator is left out of the firmware build.
 
 ## Firmware tests
 

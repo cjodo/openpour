@@ -4,3 +4,5 @@ firmware/esp32/sdkconfig
 hardware/cad/stl/
 hardware/cad/preview.png
 .vscode/
+web/node_modules/
+web/dist/

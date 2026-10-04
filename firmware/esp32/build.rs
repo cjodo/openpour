@@ -1,10 +1,27 @@
-//! Gzips ../../web into the firmware image (see src/web.rs), so one flash
-//! updates everything and the settings/recipes on LittleFS are never
-//! overwritten. Also passes the ESP-IDF build environment through.
+//! Builds the web app (npm, in ../../web) and gzips its dist/ folder into the
+//! firmware image (see src/web.rs), so one flash updates everything and the
+//! settings/recipes on LittleFS are never overwritten. Also passes the ESP-IDF
+//! build environment through.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::{env, fs};
+
+/// Inputs to the web build. dist/ and node_modules/ are outputs, so they are
+/// not watched (watching them would rebuild on every cargo run).
+const WEB_INPUTS: &[&str] = &[
+    "src",
+    "build.mjs",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "index.html",
+    "style.css",
+    "icon.svg",
+    "manifest.webmanifest",
+    "default-recipes.json",
+];
 
 use flate2::{write::GzEncoder, Compression, GzBuilder};
 
@@ -40,24 +57,50 @@ fn gzip(data: &[u8]) -> Vec<u8> {
     enc.finish().unwrap()
 }
 
+fn modified(p: &Path) -> Option<std::time::SystemTime> {
+    fs::metadata(p).and_then(|m| m.modified()).ok()
+}
+
+fn npm(web: &Path, args: &[&str]) {
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    let status = Command::new(npm).args(args).current_dir(web).status().unwrap_or_else(|e| {
+        panic!("could not run `npm` ({e}). The web app needs Node.js 18 or newer: https://nodejs.org")
+    });
+    if !status.success() {
+        panic!("`npm {}` failed in {}", args.join(" "), web.display());
+    }
+}
+
+fn build_web(web: &Path) {
+    // Reinstall when package-lock.json is newer than the last install.
+    let installed = modified(&web.join("node_modules/.package-lock.json"));
+    if installed.is_none() || installed < modified(&web.join("package-lock.json")) {
+        npm(web, &["ci"]);
+    }
+    npm(web, &["run", "build"]);
+}
+
 fn main() {
     embuild::espidf::sysenv::output();
 
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let web = manifest.join("../../web").canonicalize().expect("web/ next to firmware/");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    println!("cargo:rerun-if-changed={}", web.display());
+    for input in WEB_INPUTS {
+        println!("cargo:rerun-if-changed={}", web.join(input).display());
+    }
+    build_web(&web);
+    let dist = web.join("dist");
 
     let mut files = Vec::new();
-    walk(&web, &mut files);
+    walk(&dist, &mut files);
     files.sort();
 
     let mut src = String::from("pub static WEB_ASSETS: &[WebAsset] = &[\n");
     for (i, path) in files.iter().enumerate() {
-        println!("cargo:rerun-if-changed={}", path.display());
         let gz = out.join(format!("asset{i}.gz"));
         fs::write(&gz, gzip(&fs::read(path).unwrap())).unwrap();
-        let url = format!("/{}", path.strip_prefix(&web).unwrap().to_string_lossy().replace('\\', "/"));
+        let url = format!("/{}", path.strip_prefix(&dist).unwrap().to_string_lossy().replace('\\', "/"));
         src += &format!(
             "    WebAsset {{ path: {url:?}, mime: {:?}, data: include_bytes!({:?}) }},\n",
             mime(path).unwrap(),
