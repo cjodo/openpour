@@ -129,6 +129,15 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
         m
     }
 
+    /// (theta, radial), for simulators that advance the axes themselves.
+    pub fn axes(&self) -> (&A, &A) {
+        (&self.theta, &self.radial)
+    }
+
+    pub fn axes_mut(&mut self) -> (&mut A, &mut A) {
+        (&mut self.theta, &mut self.radial)
+    }
+
     pub fn pose(&self, s: &Settings) -> ArmPose {
         ArmPose {
             r: self.radial.position() as f32 / s.radial_steps_per_mm,
