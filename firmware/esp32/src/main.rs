@@ -215,7 +215,17 @@ fn main() -> anyhow::Result<()> {
     if let Err(e) = storage::mount() {
         log::error!("LittleFS mount failed: {e}");
     }
-    let settings = storage::load_settings();
+    #[allow(unused_mut)]
+    let mut settings = storage::load_settings();
+    #[cfg(feature = "wokwi")]
+    if settings.wifi_ssid.is_empty() {
+        log::info!("Wokwi build: joining Wokwi-GUEST");
+        settings.wifi_ssid = "Wokwi-GUEST".into();
+    }
+    // Wokwi builds put a short test recipe first, so a full brew fits a test run.
+    #[cfg(feature = "wokwi")]
+    storage::ensure_default_recipes(include_str!("../../wokwi/recipes.json"));
+    #[cfg(not(feature = "wokwi"))]
     storage::ensure_default_recipes(web::DEFAULT_RECIPES_JSON);
 
     let pulses = PulseCounter::new(pins.gpio16)?;
@@ -234,6 +244,11 @@ fn main() -> anyhow::Result<()> {
     let radial_endstop = PinDriver::input(pins.gpio19, Pull::Up)?;
 
     let net = net::start(p.modem, EspSystemEventLoop::take()?, EspDefaultNvsPartition::take()?, &settings)?;
+    #[cfg(feature = "wokwi")]
+    log::info!(
+        "Wokwi: open http://localhost:8180 (forwarded by the VS Code extension); openpour.local and the 10.13.37.x \
+         address exist only inside the simulation"
+    );
 
     let mut dev = Devices {
         settings,
