@@ -167,12 +167,14 @@ fn read_body(req: &mut Request<&mut EspHttpConnection>, max: usize) -> Option<Ve
 }
 
 fn send_json(req: Request<&mut EspHttpConnection>, status: u16, body: &str) -> Result<(), EspIOError> {
+    log::info!(target: "http", "{:?} {} -> {status} ({} bytes)", req.method(), req.uri(), body.len());
     let mut res = req.into_response(status, None, &[("Content-Type", "application/json")])?;
     res.write_all(body.as_bytes())?;
     Ok(())
 }
 
 fn send_asset(req: Request<&mut EspHttpConnection>, a: &WebAsset) -> Result<(), EspIOError> {
+    log::info!(target: "http", "{:?} {} -> 200 {} ({} bytes gzipped)", req.method(), req.uri(), a.path, a.data.len());
     let headers = [("Content-Type", a.mime), ("Content-Encoding", "gzip"), ("Cache-Control", "no-cache")];
     let mut res = req.into_response(200, None, &headers)?;
     res.write_all(a.data)?;
@@ -235,6 +237,7 @@ pub fn start(
         let tx = tx.clone();
         server.ws_handler("/ws", None, move |ws| {
             if ws.is_new() {
+                log::info!(target: "http", "WebSocket client {} connected", ws.session());
                 if let Ok(sender) = ws.create_detached_sender() {
                     clients.lock().unwrap().push(sender);
                 }
@@ -243,6 +246,7 @@ pub fn start(
             }
             if ws.is_closed() {
                 let session = ws.session();
+                log::info!(target: "http", "WebSocket client {session} disconnected");
                 clients.lock().unwrap().retain(|c| c.session() != session);
                 return Ok(());
             }

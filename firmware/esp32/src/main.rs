@@ -240,6 +240,11 @@ fn main() -> anyhow::Result<()> {
     let radial_endstop = PinDriver::input(pins.gpio19, Pull::Up)?;
 
     let net = net::start(p.modem, EspSystemEventLoop::take()?, EspDefaultNvsPartition::take()?, &settings)?;
+    #[cfg(feature = "wokwi")]
+    log::info!(
+        "Wokwi: open http://localhost:8180 (forwarded by the VS Code extension); openpour.local and the 10.13.37.x \
+         address exist only inside the simulation"
+    );
 
     let mut dev = Devices {
         settings,
