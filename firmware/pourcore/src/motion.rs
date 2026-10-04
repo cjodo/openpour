@@ -67,6 +67,8 @@ pub struct Motion<A: Axis, E: FnMut(bool)> {
     mode: Mode,
     home_step: HomeStep,
     home_start_ms: u32,
+    /// Radial position when homing began, to report how far it travelled.
+    home_start_steps: i32,
     homed: bool,
     home_failed: bool,
     hold_target: ArmPose,
@@ -116,6 +118,7 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
             mode: Mode::Released,
             home_step: HomeStep::Radial,
             home_start_ms: 0,
+            home_start_steps: 0,
             homed: false,
             home_failed: false,
             hold_target: ArmPose::default(),
@@ -193,9 +196,9 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
                 if end.radial {
                     info!(
                         target: T,
-                        "radial endstop hit after {} ms, {} steps travelled",
+                        "radial endstop hit after {} ms, {:.1} mm travelled",
                         now.wrapping_sub(self.home_start_ms),
-                        self.radial.position()
+                        (self.home_start_steps - self.radial.position()) as f32 / s.radial_steps_per_mm
                     );
                     self.radial.force_stop_at((s.radial_home_mm * s.radial_steps_per_mm).round() as i32);
                     self.home_step = HomeStep::Theta;
@@ -236,6 +239,7 @@ impl<A: Axis, E: FnMut(bool)> Motion<A, E> {
         self.mode = Mode::Homing;
         self.home_step = HomeStep::Radial;
         self.home_start_ms = now;
+        self.home_start_steps = self.radial.position();
         self.radial.run_at(-HOME_MM_S * s.radial_steps_per_mm);
     }
 
