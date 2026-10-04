@@ -30,15 +30,17 @@ The pin map is defined at the top of `firmware/esp32/src/main.rs`.
 | 27 | Both drivers EN | Active low, shared |
 | 18 | Theta endstop | Switch COM to GND, NO to the pin (internal pull-up) |
 | 19 | Radial endstop | Switch COM to GND, NO to the pin |
-| 16 | HX711 DOUT | WROOM modules only, since WROVER uses 16/17 for PSRAM |
-| 17 | HX711 SCK | |
+| 16 | Flow meter pulse output | 10 kΩ from the pin to 3V3. WROOM modules only, since WROVER uses 16 for PSRAM |
 | 23 | MOSFET module PWM/SIG | |
 | 4 | DS18B20 data | 4.7 kΩ from data to 3V3 |
 | 13 | Push button | Other leg to GND |
 | 2 | On-board LED | Status |
 
-Power the HX711 and DS18B20 from **3V3**, not 5 V, so their outputs are
-safe for the ESP32.
+Power the DS18B20 from **3V3**, not 5 V, so its output is safe for the
+ESP32. The flow meter can run from 5 V because its output is open-collector.
+Pull that output up to **3V3 only**. If your meter has its own pull-up to its
+supply, power it from 3V3 if the datasheet allows, or add a divider
+(10 kΩ / 20 kΩ) so the pin never sees 5 V.
 
 ## Stepper drivers (TMC2209, standalone)
 
@@ -53,21 +55,21 @@ safe for the ESP32.
   runs backwards, tick **Reverse … direction** in the app's Advanced settings
   instead of rewiring.
 
-## Load cell to HX711
+## Flow meter
 
-| Cell wire | HX711 |
+| Meter wire (typical) | Connects to |
 |---|---|
-| Red | E+ |
-| Black | E− |
-| White | A− |
-| Green | A+ |
+| Red | 5 V |
+| Black | GND |
+| White, yellow or blue (signal) | GPIO 16, with 10 kΩ to 3V3 |
 
-If the weight goes down when you press the platform, swap A+ and A−.
-If your board has a RATE pad or jumper, set it to 80 SPS.
+Wire colours vary, so check your meter's datasheet. The meter goes in the
+tube between the pump and the nozzle, with its arrow pointing in the
+direction of flow.
 
 ## Cable routing
 
-Motor, endstop, pump and probe cables leave the base through the slot beside
+Motor, endstop, pump, probe and flow meter cables leave the base through the slot beside
 the column. Bundle them up the column with spiral wrap and leave a loose loop
 to the arm so it can swing from −78° to +25°. The pump tube follows the same
-path to the nozzle elbow.
+path, through the flow meter, to the nozzle elbow.

@@ -8,12 +8,13 @@ laptop browser, with no app store and no cloud.
 
 - **Pours like a barista.** A two-axis polar arm traces centre, circle and
   spiral patterns over the dripper.
-- **Pours by weight.** A load cell under the cup closes the loop, so each
-  stage stops at its gram target whatever the pump does.
+- **Pours by volume.** An inline flow meter counts every millilitre, and
+  1 mL of water is 1 g, so each stage stops at its gram target whatever the
+  pump does.
 - **Configurable recipes.** Stages, water, flow rate, pattern, radius, speed
   and bloom/wait times are all editable in the app and stored on the machine.
 - **Low voltage only.** You fill an insulated reservoir from your own
-  kettle. The machine pumps, weighs and measures temperature, but never
+  kettle. The machine pumps, meters and measures temperature, but never
   heats water.
 - **Parametric.** Set your cup and dripper heights in one OpenSCAD file and
   the column length, head position and parts follow.
@@ -21,21 +22,20 @@ laptop browser, with no app store and no cloud.
 ## How it works
 
 ```
- reservoir ──tube──► peristaltic pump ──► nozzle on carriage
- (hot water,                                │  radial axis (belt, pancake NEMA17)
-  DS18B20)                                  │
-                                 arm ───────┘  theta axis (direct-drive NEMA17)
-                                  │
-                       dripper on a load-cell platform (HX711)
-                                  │
-                ESP32 ◄───────────┘ ──Wi-Fi──► browser app (served by the ESP32)
+ reservoir ──tube──► peristaltic pump ──► flow meter ──► nozzle on carriage
+ (hot water,                                  │            │  radial axis (belt, pancake NEMA17)
+  DS18B20)                                    │   arm ─────┘  theta axis (direct-drive NEMA17)
+                                              │    │
+                                              │  dripper and cup on the base
+                                              │
+                ESP32 ◄────── pulses ─────────┘ ──Wi-Fi──► browser app (served by the ESP32)
 ```
 
 The firmware converts each pattern from dripper-centred coordinates into arm
 angle and carriage radius 100 times a second. Both steppers run in velocity
 mode so the nozzle can follow spirals smoothly. The pump's speed is
 feed-forward from its calibrated rate, trimmed by the measured flow, and cut
-early enough that the water still in flight lands on target.
+just early enough that the pump's coast-down lands on target.
 
 ## Repository
 
@@ -86,7 +86,7 @@ the firmware, so recipes, brewing and calibration all work in the browser.
 
 ## Firmware tests
 
-Kinematics, pour patterns, flow control, scale filtering, motion control,
+Kinematics, pour patterns, flow control, flow-meter counting, motion control,
 the brew state machine and command handling all live in `pourcore`, which
 has no hardware dependencies. Its tests run on your computer, with a
 simulated machine for the brew tests:
@@ -123,7 +123,7 @@ second around the dripper.
 |---|---|
 | `GET /api/settings`, `POST /api/settings` | Machine settings (partial updates allowed) |
 | `GET /api/recipes`, `POST /api/recipes` | The full recipe array |
-| `ws://<host>/ws` | Status pushed 5× per second; send `{"cmd": "start", "recipe": "<id>"}`, `pause`, `resume`, `stop`, `tare`, `home`, `park`, `center`, `jog`, `setCenter`, `release`, `prime`, `calScale`, `calPump` |
+| `ws://<host>/ws` | Status pushed 5× per second; send `{"cmd": "start", "recipe": "<id>"}`, `pause`, `resume`, `stop`, `home`, `park`, `center`, `jog`, `setCenter`, `release`, `prime`, `meterRun` (calibration dispense), `calMeter` (`{"ml": <measured>}`), `calPump` |
 
 ## Status
 
@@ -136,9 +136,10 @@ sizes on the first build. Reports and fixes are welcome.
 ## Safety
 
 Hot water burns. Keep the reservoir lid on and the machine on a stable
-surface, and never run the pump without a cup on the platform. The firmware
-stops if no water reaches the scale or if the cup would overflow, but it is
-not a substitute for paying attention.
+surface, and never run the pump without a cup under the nozzle. The firmware
+stops if the flow meter sees no water, or if it counts more than the recipe
+holds. It can't see what is in the cup, though, so it is not a substitute
+for paying attention.
 
 ## License
 
