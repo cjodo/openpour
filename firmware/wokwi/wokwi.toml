@@ -1,0 +1,20 @@
+# Wokwi simulation of the real ESP32 firmware. Build with ./build.sh, then:
+#   wokwi-cli firmware/wokwi            (needs WOKWI_CLI_TOKEN)
+# or open this folder in VS Code with the Wokwi extension.
+[wokwi]
+version = 1
+firmware = 'openpour.bin'
+elf = '../esp32/target/xtensa-esp32-espidf/release/openpour'
+
+[[chip]]
+name = 'flowmeter'
+binary = 'chips/flowmeter.chip.wasm'
+
+[[chip]]
+name = 'endstop'
+binary = 'chips/endstop.chip.wasm'
+
+# The web app: http://localhost:8180
+[[net.forward]]
+from = 'localhost:8180'
+to = 'target:80'

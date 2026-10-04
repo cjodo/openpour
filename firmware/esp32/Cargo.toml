@@ -10,6 +10,11 @@ resolver = "2"
 name = "openpour"
 harness = false # no std test harness on the target; tests live in ../pourcore
 
+[features]
+# For the Wokwi simulation (../wokwi): join its open Wokwi-GUEST network
+# instead of starting an access point when no Wi-Fi is configured.
+wokwi = []
+
 [profile.release]
 opt-level = "s"
 

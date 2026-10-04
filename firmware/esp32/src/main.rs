@@ -215,7 +215,13 @@ fn main() -> anyhow::Result<()> {
     if let Err(e) = storage::mount() {
         log::error!("LittleFS mount failed: {e}");
     }
-    let settings = storage::load_settings();
+    #[allow(unused_mut)]
+    let mut settings = storage::load_settings();
+    #[cfg(feature = "wokwi")]
+    if settings.wifi_ssid.is_empty() {
+        log::info!("Wokwi build: joining Wokwi-GUEST");
+        settings.wifi_ssid = "Wokwi-GUEST".into();
+    }
     storage::ensure_default_recipes(web::DEFAULT_RECIPES_JSON);
 
     let pulses = PulseCounter::new(pins.gpio16)?;

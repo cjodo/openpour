@@ -1,0 +1,3 @@
+openpour.bin
+chips/*.chip.wasm
+chips/target/

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "author": "OpenPour",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    {
+      "type": "chip-flowmeter", "id": "meter", "top": -120, "left": 220,
+      "attrs": { "gpsAtFull": "6.6", "pulsesPerLitre": "2010", "dry": "0", "meterDead": "0" }
+    },
+    { "type": "chip-endstop", "id": "radial", "top": 40, "left": 220, "attrs": { "startSteps": "3200", "stuck": "0" } },
+    { "type": "chip-endstop", "id": "theta", "top": 140, "left": 220, "attrs": { "startSteps": "178", "stuck": "0" } },
+    { "type": "wokwi-ds18b20", "id": "probe", "top": -110, "left": -160, "attrs": {} },
+    { "type": "wokwi-resistor", "id": "pullup", "top": -40, "left": -150, "attrs": { "value": "4700" } },
+    { "type": "wokwi-pushbutton", "id": "button", "top": 220, "left": -170, "attrs": { "color": "green" } },
+    { "type": "wokwi-led", "id": "pump-led", "top": -130, "left": 120, "attrs": { "color": "blue", "label": "pump" } }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+
+    [ "meter:PUMP", "esp:23", "blue", [] ],
+    [ "meter:OUT", "esp:16", "cyan", [] ],
+    [ "meter:VCC", "esp:3V3", "red", [] ],
+    [ "meter:GND", "esp:GND.2", "black", [] ],
+    [ "pump-led:A", "esp:23", "blue", [] ],
+    [ "pump-led:C", "esp:GND.2", "black", [] ],
+
+    [ "radial:STEP", "esp:33", "orange", [] ],
+    [ "radial:DIR", "esp:32", "yellow", [] ],
+    [ "radial:SW", "esp:19", "green", [] ],
+    [ "radial:GND", "esp:GND.2", "black", [] ],
+
+    [ "theta:STEP", "esp:26", "orange", [] ],
+    [ "theta:DIR", "esp:25", "yellow", [] ],
+    [ "theta:SW", "esp:18", "green", [] ],
+    [ "theta:GND", "esp:GND.2", "black", [] ],
+
+    [ "probe:DQ", "esp:4", "purple", [] ],
+    [ "probe:VCC", "esp:3V3", "red", [] ],
+    [ "probe:GND", "esp:GND.1", "black", [] ],
+    [ "pullup:1", "esp:4", "purple", [] ],
+    [ "pullup:2", "esp:3V3", "red", [] ],
+
+    [ "button:1.l", "esp:13", "green", [] ],
+    [ "button:2.l", "esp:GND.1", "black", [] ]
+  ],
+  "dependencies": {}
+}

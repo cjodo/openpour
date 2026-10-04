@@ -1,0 +1,6 @@
+[build]
+target = "wasm32-unknown-unknown"
+
+[target.wasm32-unknown-unknown]
+# Wokwi calls the chips' callbacks through the function table.
+rustflags = ["-C", "link-arg=--export-table"]

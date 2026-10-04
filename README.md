@@ -110,6 +110,33 @@ cd firmware/sim && cargo run           # then open http://localhost:8080
     `tempC`, `{"press": "short"|"long"}` (the front button), and
     `{"resetDispensed": true}`.
 
+### Wokwi (the real firmware on a simulated ESP32)
+
+[Wokwi](https://wokwi.com) emulates the ESP32 itself, so it runs the actual
+firmware image: ESP-IDF, Wi-Fi, the HTTP server and the drivers. Use it for
+the code the host simulator can't reach. `firmware/wokwi/diagram.json` wires
+up the board as `docs/wiring.md` describes, with two custom chips written in
+Rust (`firmware/wokwi/chips`):
+
+- **Pump + flow meter:** it reads the pump's PWM duty on GPIO 23 and sends
+  pulses to GPIO 16 at a realistic rate.
+- **Stepper axis + endstop** (one per axis): it counts STEP/DIR pulses and
+  closes the endstop switch at the end of travel, so homing really runs.
+
+Each chip has sliders for faults: dry pump, dead meter and a broken switch.
+The DS18B20, the button and a pump LED are standard Wokwi parts.
+
+```sh
+firmware/wokwi/build.sh                            # chips + firmware (--features wokwi) + 4 MB flash image
+WOKWI_CLI_TOKEN=… wokwi-cli firmware/wokwi --timeout 60000
+```
+
+The `wokwi` feature makes the firmware join Wokwi's open `Wokwi-GUEST`
+network instead of starting its own access point. In VS Code with the Wokwi
+extension, open `firmware/wokwi/` and the web app is at
+http://localhost:8180. `wokwi-cli` needs a free token from
+wokwi.com/dashboard/ci.
+
 ### Browser-only mock
 
 ```sh

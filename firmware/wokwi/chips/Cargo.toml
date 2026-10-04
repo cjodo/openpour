@@ -1,0 +1,10 @@
+# Wokwi custom chips for the OpenPour simulation, compiled to WebAssembly.
+# Built by ../build.sh; each chip's .wasm is copied next to its .chip.json.
+[workspace]
+members = ["flowmeter", "endstop"]
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
