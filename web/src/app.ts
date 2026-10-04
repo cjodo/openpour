@@ -2,6 +2,7 @@
 // simulated machine (see mock.ts) at http://localhost:8000/?mock.
 
 import { NozzleChart, TimeChart, TRAIL_MS, type Sample, type TrailPoint } from './charts';
+import { Smooth, Timeline } from './timeline';
 import type {
   Command, MachineState, Pattern, Recipe, ServerMessage, Settings, SocketLike, Stage, Status, Transport,
 } from './types';
@@ -30,7 +31,7 @@ const app: Transport & {
 } = {
   recipes: [],
   settings: null,
-  status: { t: 'status', state: 'idle', poured: 0, flow: 0 },
+  status: { t: 'status', ms: 0, state: 'idle', poured: 0, flow: 0 },
   history: [],
   editing: -1,
   sock: null,
@@ -156,6 +157,7 @@ function phaseText(s: Status) {
   }
 }
 
+/** A status arrived: controls update now; everything that moves follows the playback clock. */
 function renderStatus(s: Status) {
   const prev = app.status;
   if (s.message && s.message !== prev.message) {
@@ -163,27 +165,17 @@ function renderStatus(s: Status) {
     loadSettings(); // a calibration finished and may have changed them
   }
   app.status = s;
+  const now = performance.now();
+  lastArrival = now;
+  timeline.push(s, now);
   recordHistory(s, prev);
-  queuePath(s);
+  addPath(s);
+  renderControls(s);
+  startLoop();
+}
 
-  const recipe = activeRecipe();
-  const total = s.total ?? (recipe ? totalWater(recipe) : 0);
-
-  $('#poured').textContent = fmt1(s.poured);
-  $('#total').textContent = total ? String(Math.round(total)) : '–';
-  $('#flow').textContent = fmt1(Math.max(0, s.flow));
-  $('#elapsed').textContent = clockTime(s.elapsed ?? 0);
-  $('#phase').innerHTML = phaseText(s);
-
-  const minTemp = s.minTemp ?? recipe?.minTemp ?? 0;
-  const tempEl = $('#temp');
-  tempEl.textContent = s.temp != null ? `${s.temp.toFixed(1)} °C` : 'No probe';
-  tempEl.classList.toggle('warn', s.temp != null && minTemp > 0 && s.temp < minTemp - 0.5);
-
-  renderBeaker(recipe, s, total);
-  renderStageStrip(recipe, s);
-  drawCharts();
-
+/** Buttons and alerts react to the newest status immediately. */
+function renderControls(s: Status) {
   const err = $('#brew-error');
   err.hidden = !s.error;
   err.textContent = s.error || '';
@@ -198,9 +190,64 @@ function renderStatus(s: Status) {
   $('#btn-stop').hidden = !(brewing || finished);
   $('#btn-stop').textContent = finished ? 'Dismiss' : 'Stop';
   $<HTMLSelectElement>('#recipe-select').disabled = brewing;
-
-  $('#meter-poured').textContent = fmt1(s.poured);
   $('#motion-state').textContent = s.homed ? (s.motion ?? '') : `${s.motion}, not homed`;
+}
+
+/** Writes text only when it changed (this runs every animation frame). */
+function setText(sel: string, text: string) {
+  const el = $(sel);
+  if (el.textContent !== text) el.textContent = text;
+}
+
+// Eased display values, on top of the timeline's interpolation.
+const smooth = {
+  poured: new Smooth(90, 25),
+  flow: new Smooth(120, 3),
+  nozzleX: new Smooth(60, 15),
+  nozzleY: new Smooth(60, 15),
+};
+let lastRender = 0;
+
+/** Everything that moves, drawn for the machine as it was at `play` (machine ms). */
+function renderLive(view: Status, play: number) {
+  const now = performance.now();
+  const dt = reduceMotion.matches ? 0 : Math.min(now - lastRender, 100);
+  lastRender = now;
+  const s: Status = { ...view, poured: smooth.poured.next(view.poured, dt), flow: smooth.flow.next(view.flow, dt) };
+  const recipe = activeRecipe();
+  const total = s.total ?? (recipe ? totalWater(recipe) : 0);
+
+  setText('#poured', fmt1(s.poured));
+  setText('#total', total ? String(Math.round(total)) : '–');
+  setText('#flow', fmt1(Math.max(0, s.flow)));
+  setText('#elapsed', clockTime(s.elapsed ?? 0));
+  setText('#meter-poured', fmt1(s.poured));
+  const phase = phaseText(s);
+  if ($('#phase').innerHTML !== phase) $('#phase').innerHTML = phase;
+
+  const minTemp = s.minTemp ?? recipe?.minTemp ?? 0;
+  const tempEl = $('#temp');
+  setText('#temp', s.temp != null ? `${s.temp.toFixed(1)} °C` : 'No probe');
+  tempEl.classList.toggle('warn', s.temp != null && minTemp > 0 && s.temp < minTemp - 0.5);
+
+  renderBeaker(recipe, s, total);
+  renderStageStrip(recipe, s);
+
+  // The charts' growing ends use the same eased values as the numbers.
+  const history = visibleHistory(play);
+  const end = history.at(-1);
+  if (end && end.ms === play) {
+    end.poured = s.poured - runBase;
+    end.flow = Math.max(0, s.flow);
+  }
+  for (const c of charts) c.draw(history);
+  const shown = trail.slice(0, upto(trail, play));
+  const target = nozzleAt(play, s);
+  let head: [number, number] | null = null;
+  if (target) head = [smooth.nozzleX.next(target[0], dt), smooth.nozzleY.next(target[1], dt)];
+  else (smooth.nozzleX.reset(), smooth.nozzleY.reset());
+  const ring = patternRing(s, recipe);
+  for (const c of nozzleCharts) c.draw(shown, play, head, ring);
 }
 
 // The full recipe fills the beaker to this height, leaving headroom for the top graduation.
@@ -304,9 +351,32 @@ function setupCharts() {
   );
 }
 
-function drawCharts() {
-  for (const c of charts) c.draw(app.history);
-  drawNozzles(performance.now());
+// ---------------------------------------------------------------- playback
+
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const timeline = new Timeline(() => reduceMotion.matches);
+let looping = false;
+let lastArrival = 0;
+
+function frame(now: number) {
+  const play = timeline.advance(now);
+  const v = timeline.view();
+  if (v) renderLive(v, play);
+  const fading = trail.length > 1 && play - trail[0].ms < TRAIL_MS;
+  if (timeline.settling || now - lastArrival < 1500 || fading) requestAnimationFrame(frame);
+  else looping = false;
+}
+
+function startLoop() {
+  if (!looping) {
+    looping = true;
+    requestAnimationFrame(frame);
+  }
+}
+
+/** One frame outside the loop: tab switches, resizes, recipe changes. */
+function redraw() {
+  renderLive(timeline.view() ?? app.status, timeline.playMs);
 }
 
 /** Records the run (brew, calibration or priming) for the time charts. */
@@ -315,75 +385,83 @@ function recordHistory(s: Status, prev: Status) {
   const wasRunning = BREWING.has(prev.state) || (prev.duty ?? 0) > 0;
   if (running && !wasRunning) {
     app.history = [];
-    runStart = performance.now();
+    runStartMs = s.ms;
     // Brews and calibrations zero the meter; priming doesn't, so count from here.
     runBase = BREWING.has(s.state) ? 0 : s.poured;
   }
   if (!running) return;
-  // Brews report machine time; calibration and priming don't, so use ours.
-  const t = s.elapsed ?? (performance.now() - runStart) / 1000;
+  // Brews report their own elapsed time (pauses excluded); otherwise use machine time.
+  const t = s.elapsed ?? (s.ms - runStartMs) / 1000;
   const last = app.history.at(-1);
-  if (!last || t - last.t >= 0.15) {
-    app.history.push({ t, poured: s.poured - runBase, flow: Math.max(0, s.flow), targetFlow: targetFlowOf(s) });
+  if (!last || s.ms > last.ms) {
+    app.history.push({ ms: s.ms, t, poured: s.poured - runBase, flow: Math.max(0, s.flow), targetFlow: targetFlowOf(s) });
   }
 }
-let runStart = 0;
+let runStartMs = 0;
 let runBase = 0;
 
-// The nozzle's path arrives 10 points at a time with each status; replaying
-// them at the rate they were sampled (50/s) animates it smoothly.
+/** The nozzle's path, stamped with machine time (each point's age is in the status). */
 const trail: TrailPoint[] = [];
-const pending: [number, number][] = [];
-const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-let animating = false;
-let lastFrame = 0;
-let owed = 0;
 
-function queuePath(s: Status) {
+function addPath(s: Status) {
   if (!s.homed) {
     trail.length = 0;
-    pending.length = 0;
+    return;
   }
-  pending.push(...(s.path ?? []));
-  if (reduceMotion.matches) {
-    const now = performance.now();
-    for (const [x, y] of pending.splice(0)) trail.push({ x, y, at: now });
+  for (const [x, y, ago] of s.path ?? []) {
+    const ms = s.ms - ago;
+    if (!trail.length || ms > trail.at(-1)!.ms) trail.push({ x, y, ms });
   }
-  if (!animating) {
-    animating = true;
-    lastFrame = performance.now();
-    requestAnimationFrame(animate);
-  }
+  while (trail.length > 1 && trail[0].ms < timeline.playMs - TRAIL_MS) trail.shift();
 }
 
-function animate(now: number) {
-  // Catch up when behind (a slow link delivers bursts), without jumping.
-  owed += ((now - lastFrame) / 1000) * 50 * (1 + pending.length / 20);
-  lastFrame = now;
-  while (owed >= 1 && pending.length) {
-    const [x, y] = pending.shift()!;
-    trail.push({ x, y, at: now });
-    owed -= 1;
+/** Index of the first item later than `play`, in a list sorted by time. */
+function upto<T extends { ms: number }>(items: T[], play: number): number {
+  let lo = 0;
+  let hi = items.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (items[mid].ms <= play) lo = mid + 1;
+    else hi = mid;
   }
-  if (!pending.length) owed = 0;
-  while (trail.length > 1 && now - trail[0].at > TRAIL_MS) trail.shift();
-  drawNozzles(now);
-  const fading = trail.length > 1 && now - trail[0].at < TRAIL_MS;
-  if (pending.length || fading) requestAnimationFrame(animate);
-  else animating = false;
+  return lo;
+}
+
+const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+
+/** History up to `play`, ending in a point interpolated at `play` so the lines grow smoothly. */
+function visibleHistory(play: number): Sample[] {
+  const h = app.history;
+  const i = upto(h, play);
+  const shown = h.slice(0, i);
+  const a = h[i - 1];
+  const b = h[i];
+  if (a && b) {
+    const k = (play - a.ms) / (b.ms - a.ms);
+    shown.push({ ms: play, t: lerp(a.t, b.t, k), poured: lerp(a.poured, b.poured, k), flow: lerp(a.flow, b.flow, k), targetFlow: a.targetFlow });
+  }
+  return shown;
+}
+
+/** The nozzle at `play`, between the two path points around it. */
+function nozzleAt(play: number, s: Status): [number, number] | null {
+  if (!s.homed) return null;
+  const i = upto(trail, play);
+  const a = trail[i - 1];
+  const b = trail[i];
+  if (a && b) {
+    const k = (play - a.ms) / (b.ms - a.ms);
+    return [lerp(a.x, b.x, k), lerp(a.y, b.y, k)];
+  }
+  if (a) return [a.x, a.y]; // no move since: it's standing there
+  return s.nozzle ?? null;
 }
 
 /** The radius of the pattern being poured, drawn as a guide. */
-function patternRing(): number | null {
-  const s = app.status;
+function patternRing(s: Status, recipe: Recipe | undefined): number | null {
   if (s.state !== 'pouring' || s.stage == null) return null;
-  const st = activeRecipe()?.stages[s.stage];
+  const st = recipe?.stages[s.stage];
   return st && st.pattern !== 'center' ? st.radius : null;
-}
-
-function drawNozzles(now: number) {
-  const ring = patternRing();
-  for (const c of nozzleCharts) c.draw(trail, now, app.status.nozzle ?? null, ring);
 }
 
 function renderRecipeSelect() {
@@ -393,7 +471,8 @@ function renderRecipeSelect() {
     .map((r) => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}, ${totalWater(r)} g</option>`)
     .join('');
   if (keep && app.recipes.some((r) => r.id === keep)) sel.value = keep;
-  renderStatus(app.status);
+  renderControls(app.status);
+  redraw();
 }
 
 // ---------------------------------------------------------------- recipes view
@@ -564,7 +643,7 @@ function showView(name: string) {
     if (b.dataset.view === name) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   }
-  requestAnimationFrame(drawCharts);
+  requestAnimationFrame(redraw);
 }
 
 function bind() {
@@ -577,7 +656,7 @@ function bind() {
   });
   $('#btn-pause').addEventListener('click', () => send({ cmd: app.status.state === 'paused' ? 'resume' : 'pause' }));
   $('#btn-stop').addEventListener('click', () => send({ cmd: 'stop' }));
-  $('#recipe-select').addEventListener('change', () => renderStatus(app.status));
+  $('#recipe-select').addEventListener('change', redraw);
 
   $('#recipe-list').addEventListener('click', (e) => {
     const b = (e.target as Element).closest<HTMLElement>('[data-edit]');
@@ -668,7 +747,7 @@ function bind() {
     }
   });
 
-  window.addEventListener('resize', drawCharts);
+  window.addEventListener('resize', redraw);
 }
 
 async function main() {

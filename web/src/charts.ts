@@ -4,7 +4,9 @@
 // tokens so both themes work.
 
 export interface Sample {
-  /** Seconds since the run started. */
+  /** Machine time (status `ms`), for playback. */
+  ms: number;
+  /** Seconds since the run started (the x axis). */
   t: number;
   poured: number;
   flow: number;
@@ -36,7 +38,18 @@ export interface TimeChartOptions {
   spanHint?: () => number;
 }
 
-const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// Colour tokens, read once and re-read when the theme changes (charts redraw
+// every animation frame).
+const tokens = new Map<string, string>();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => tokens.clear());
+const css = (name: string) => {
+  let v = tokens.get(name);
+  if (v == null) {
+    v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    tokens.set(name, v);
+  }
+  return v;
+};
 
 /** 0, then 1/2/5 × 10^n steps giving about `n` ticks up to `top`. */
 function niceStep(top: number, n = 3) {
@@ -247,14 +260,14 @@ export class TimeChart {
 
 // ---------------------------------------------------------------- nozzle
 
-/** One animated point of the nozzle's path; `at` is when it was drawn (ms). */
+/** One point of the nozzle's path, stamped with machine time. */
 export interface TrailPoint {
   x: number;
   y: number;
-  at: number;
+  ms: number;
 }
 
-/** How long the path stays visible, fading out. */
+/** How long the path stays visible, fading out (machine ms). */
 export const TRAIL_MS = 6000;
 
 /**
@@ -268,9 +281,10 @@ export class NozzleChart {
     private readout: HTMLElement,
   ) {}
 
-  draw(trail: TrailPoint[], now: number, current: [number, number] | null, ring: number | null) {
-    if (current) {
-      const [x, y] = current;
+  /** `trail` holds the points up to `play` (machine ms); `head` is the nozzle at `play`. */
+  draw(trail: TrailPoint[], play: number, head: [number, number] | null, ring: number | null) {
+    if (head) {
+      const [x, y] = head;
       this.readout.textContent =
         `${Math.hypot(x, y).toFixed(1)} mm from the centre (x ${x.toFixed(1)}, y ${y.toFixed(1)})`;
     } else {
@@ -288,8 +302,7 @@ export class NozzleChart {
 
     // Scale to where the nozzle is and the pattern, not to old travel moves
     // (they'd zoom out too far to centre by); older path is clipped instead.
-    const head0 = trail.at(-1) ?? (current ? { x: current[0], y: current[1] } : null);
-    let reach = Math.max(30, (ring ?? 0) + 8, head0 ? Math.hypot(head0.x, head0.y) + 8 : 0);
+    let reach = Math.max(30, (ring ?? 0) + 8, head ? Math.hypot(head[0], head[1]) + 8 : 0);
     reach = Math.ceil(reach / 10) * 10;
     const cx = w / 2;
     const cy = h / 2;
@@ -347,19 +360,19 @@ export class NozzleChart {
     g.lineWidth = 2;
     g.lineJoin = 'round';
     g.lineCap = 'round';
-    for (let i = 1; i < trail.length; i++) {
-      const age = (now - trail[i].at) / TRAIL_MS;
+    const pts = head ? [...trail, { x: head[0], y: head[1], ms: play }] : trail;
+    for (let i = 1; i < pts.length; i++) {
+      const age = (play - pts[i].ms) / TRAIL_MS;
       if (age >= 1) continue;
       g.globalAlpha = 1 - age;
       g.beginPath();
-      g.moveTo(...sx(trail[i - 1].x, trail[i - 1].y));
-      g.lineTo(...sx(trail[i].x, trail[i].y));
+      g.moveTo(...sx(pts[i - 1].x, pts[i - 1].y));
+      g.lineTo(...sx(pts[i].x, pts[i].y));
       g.stroke();
     }
     g.globalAlpha = 1;
     g.restore();
 
-    const head = trail.at(-1) ?? (current ? { x: current[0], y: current[1] } : null);
-    if (head) dot(g, ...sx(head.x, head.y), color, surface, 5);
+    if (head) dot(g, ...sx(head[0], head[1]), color, surface, 5);
   }
 }

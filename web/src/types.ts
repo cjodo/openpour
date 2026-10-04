@@ -66,6 +66,8 @@ export type MachineState =
 
 export interface Status {
   t: 'status';
+  /** Machine time (ms since boot) when this was sent. */
+  ms: number;
   state: MachineState;
   pausedFrom?: MachineState;
   /** Grams through the flow meter since the brew or calibration started. */
@@ -77,8 +79,8 @@ export interface Status {
   homed?: boolean;
   /** Nozzle (x, y) in mm from the saved dripper centre; x is away from the pivot. Only once homed. */
   nozzle?: [number, number];
-  /** The nozzle's positions since the last status, sampled at 50 Hz, oldest first. */
-  path?: [number, number][];
+  /** The nozzle's positions since the last status, sampled at 50 Hz, oldest first: [x, y, age in ms before `ms`]. */
+  path?: [number, number, number][];
   error?: string;
   message?: string;
   // Only while a recipe is running or just finished:

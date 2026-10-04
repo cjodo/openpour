@@ -41,8 +41,10 @@ export function createMock(): Transport {
     // Nozzle, in mm from the dripper centre (x away from the pivot), and where it's heading.
     nozzle: [...PARK] as [number, number],
     goal: [...PARK] as [number, number],
-    path: [] as [number, number][],
+    path: [] as [number, number, number][], // x, y, machine ms
     sinceSample: 0,
+    /** Machine time in ms, like the firmware's millis(). */
+    clockMs: 0,
   };
 
   async function ensureRecipes(): Promise<Recipe[]> {
@@ -112,12 +114,15 @@ export function createMock(): Transport {
     if (sim.sinceSample >= 0.02) {
       sim.sinceSample = 0;
       const last = sim.path.at(-1) ?? [Infinity, Infinity];
-      if (Math.hypot(sim.nozzle[0] - last[0], sim.nozzle[1] - last[1]) >= 0.05) sim.path.push([...sim.nozzle]);
+      if (Math.hypot(sim.nozzle[0] - last[0], sim.nozzle[1] - last[1]) >= 0.05) {
+        sim.path.push([sim.nozzle[0], sim.nozzle[1], sim.clockMs]);
+      }
       if (sim.path.length > 50) sim.path.shift();
     }
   }
 
   function step(dt: number) {
+    sim.clockMs += dt * 1000;
     moveNozzle(dt);
     sim.inState += dt;
     sim.temp = Math.max(70, sim.temp - 0.004 * dt);
@@ -196,7 +201,7 @@ export function createMock(): Transport {
 
   function status(): Status {
     const s: Status = {
-      t: 'status', state: sim.state, poured: grams(), flow: flow(), duty: sim.duty,
+      t: 'status', ms: Math.round(sim.clockMs), state: sim.state, poured: grams(), flow: flow(), duty: sim.duty,
       temp: sim.temp, motion: sim.motion, homed: sim.homed,
     };
     if (sim.state === 'paused') s.pausedFrom = sim.pausedFrom;
@@ -214,7 +219,7 @@ export function createMock(): Transport {
     if (sim.homed) {
       const r1 = (v: number) => Math.round(v * 10) / 10;
       s.nozzle = [r1(sim.nozzle[0]), r1(sim.nozzle[1])];
-      s.path = sim.path.splice(0).map(([x, y]) => [r1(x), r1(y)]);
+      s.path = sim.path.splice(0).map(([x, y, ms]) => [r1(x), r1(y), Math.max(0, Math.round(sim.clockMs - ms))]);
     }
     return s;
   }
@@ -308,7 +313,7 @@ export function createMock(): Transport {
     last = now;
     step(dt);
     sinceStatus += dt / SPEED;
-    if (sinceStatus >= 0.2) {
+    if (sinceStatus >= 0.1) {
       sinceStatus = 0;
       broadcast(status());
     }
