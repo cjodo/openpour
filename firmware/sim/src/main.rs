@@ -29,7 +29,7 @@ use tokio::sync::broadcast;
 use crate::machine::SimMachine;
 use crate::server::{Shared, Snapshot, ToSim};
 
-const STATUS_PERIOD: Duration = Duration::from_millis(200);
+const STATUS_PERIOD: Duration = Duration::from_millis(100);
 /// Caps catch-up after a stall (a breakpoint, a suspended laptop).
 const MAX_STEPS_PER_LOOP: u32 = 2000;
 
@@ -136,7 +136,7 @@ fn simulate(rx: Receiver<ToSim>, out: broadcast::Sender<String>, snapshot: Arc<M
             last_status = Instant::now();
             refresh(&snapshot, &dev);
             let mut status = brew.status(&dev);
-            status["path"] = trail.take_json();
+            status["path"] = trail.take_json(dev.now);
             let _ = out.send(status.to_string());
         }
         std::thread::sleep(Duration::from_millis(1));

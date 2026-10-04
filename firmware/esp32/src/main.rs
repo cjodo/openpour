@@ -49,7 +49,7 @@ use crate::net::Net;
 use crate::pump::Pump;
 use crate::stepper::Stepper;
 
-const STATUS_PERIOD_MS: u32 = 200;
+const STATUS_PERIOD_MS: u32 = 100;
 const REBOOT_DELAY_MS: u32 = 1500;
 /// A loop iteration longer than this is logged: it delays motion and flow control.
 const LOOP_STALL_MS: u32 = 50;
@@ -303,7 +303,7 @@ fn main() -> anyhow::Result<()> {
         if dev.net.wants_status() || now.wrapping_sub(last_status_ms) >= STATUS_PERIOD_MS {
             last_status_ms = now;
             let mut status = brew.status(&dev);
-            status["path"] = trail.take_json();
+            status["path"] = trail.take_json(now);
             dev.net.send_status(status.to_string());
         }
         if reboot_at.is_some_and(|t| now.wrapping_sub(t) as i32 >= 0) {
