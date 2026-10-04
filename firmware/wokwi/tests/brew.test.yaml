@@ -1,0 +1,35 @@
+# A full brew on the real firmware: the front button starts the first recipe,
+# which in Wokwi builds is the short "Wokwi test" (../recipes.json), so the run
+# fits Wokwi's free 5-minute limit. Each step is confirmed by the firmware's
+# own log lines. Run with ../test.sh, or:
+#   ../run.sh --scenario tests/brew.test.yaml --timeout 120000 --fail-text '-> error'
+name: 'Brew the first recipe'
+version: 1
+author: 'OpenPour'
+
+steps:
+  - wait-serial: 'Registered Httpd server handler Get for URI "/*"'
+  - delay: 500ms
+
+  # Short press: start the last (here, the first) recipe.
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 1
+  - delay: 200ms
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 0
+
+  - wait-serial: 'brew: start "Wokwi test"'
+  # Homing: the stepper interrupt steps both axes into the endstop chips.
+  - wait-serial: 'motion: radial endstop hit'
+  - wait-serial: 'motion: theta endstop hit'
+  # Pouring: pump PWM drives the meter chip, the pulse counter counts.
+  - wait-serial: 'brew: preparing -> pouring'
+  - wait-serial: 'brew: stage 1 pump off at'
+  - wait-serial: 'brew: stage 1 settled at'
+  - wait-serial: 'brew: stage 2 pump off at'
+  - wait-serial: 'brew: stage 2 settled at'
+  - wait-serial: 'brew: finishing -> done'

@@ -222,6 +222,10 @@ fn main() -> anyhow::Result<()> {
         log::info!("Wokwi build: joining Wokwi-GUEST");
         settings.wifi_ssid = "Wokwi-GUEST".into();
     }
+    // Wokwi builds put a short test recipe first, so a full brew fits a test run.
+    #[cfg(feature = "wokwi")]
+    storage::ensure_default_recipes(include_str!("../../wokwi/recipes.json"));
+    #[cfg(not(feature = "wokwi"))]
     storage::ensure_default_recipes(web::DEFAULT_RECIPES_JSON);
 
     let pulses = PulseCounter::new(pins.gpio16)?;

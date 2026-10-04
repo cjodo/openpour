@@ -1,0 +1,62 @@
+# Fault handling on the real firmware, using the custom chips' sliders.
+#   ../test.sh faults   (or ../run.sh --scenario tests/faults.test.yaml --timeout 120000)
+# The broken endstop comes first: it needs an unhomed arm, as after boot.
+name: 'Broken endstop and dry pump'
+version: 1
+author: 'OpenPour'
+
+steps:
+  - wait-serial: 'Registered Httpd server handler Get for URI "/*"'
+  - delay: 500ms
+
+  # 1. Broken radial endstop: homing must time out, not drive forever.
+  - set-control:
+      part-id: radial
+      control: stuck
+      value: 1
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 1
+  - delay: 200ms
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 0
+  - wait-serial: 'motion: homing timed out'
+  - wait-serial: 'brew: preparing -> error'
+
+  # Fix the switch; a short press clears the error.
+  - set-control:
+      part-id: radial
+      control: stuck
+      value: 0
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 1
+  - delay: 200ms
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 0
+  - wait-serial: 'brew: error -> idle'
+
+  # 2. Dry pump: the pump runs but no water reaches the meter.
+  - set-control:
+      part-id: meter
+      control: dry
+      value: 1
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 1
+  - delay: 200ms
+  - set-control:
+      part-id: button
+      control: pressed
+      value: 0
+  - wait-serial: 'motion: theta endstop hit'
+  - wait-serial: 'brew: preparing -> pouring'
+  - wait-serial: 'brew: dry-flow watchdog'
+  - wait-serial: 'brew: pouring -> error'

@@ -110,11 +110,25 @@ trap 'rm -f "$out" "$status_file"' EXIT INT TERM
 } | tee "$out"
 status=$(cat "$status_file")
 
+scenario=false
+for a in "$@"; do
+  [ "$a" = "--scenario" ] && scenario=true
+done
+
 if grep -qi 'unauthorized\|invalid token\|token.*expired' "$out"; then
   printf '\nrun.sh: Wokwi rejected the token from %s. It may be mistyped, revoked or\n' "$source" >&2
   printf 'expired; check it at https://wokwi.com/dashboard/ci or create a new one.\n' >&2
+elif grep -qi 'connection timed out after' "$out"; then
+  printf '\nrun.sh: the simulation runs on Wokwi'"'"'s servers, and the plan'"'"'s per-run limit was\n' >&2
+  printf 'reached (5 minutes of real time on the free plan; the ESP32 simulates at roughly\n' >&2
+  printf 'a quarter of real speed). Shorten the run or see https://wokwi.com/pricing.\n' >&2
+  [ "$status" = 0 ] && status=1
 elif [ "$status" = 42 ]; then
-  printf '\nrun.sh: stopped at the time limit (pass --timeout <ms> for longer).\n' >&2
-  status=0
+  if $scenario; then
+    printf '\nrun.sh: the scenario did not finish within --timeout.\n' >&2
+  else
+    printf '\nrun.sh: stopped at the time limit (pass --timeout <ms> for longer).\n' >&2
+    status=0
+  fi
 fi
 exit "$status"
