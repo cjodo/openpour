@@ -38,6 +38,7 @@ use pourcore::brew::Brew;
 use pourcore::machine::{Machine, MotionCmd};
 use pourcore::meter::FlowMeter;
 use pourcore::motion::{Endstops, Motion};
+use pourcore::nozzle;
 use pourcore::recipes::{self, Recipe};
 use pourcore::settings::Settings;
 use serde_json::Value;
@@ -48,7 +49,7 @@ use crate::net::Net;
 use crate::pump::Pump;
 use crate::stepper::Stepper;
 
-const STATUS_PERIOD_MS: u32 = 200;
+const STATUS_PERIOD_MS: u32 = 100;
 const REBOOT_DELAY_MS: u32 = 1500;
 /// A loop iteration longer than this is logged: it delays motion and flow control.
 const LOOP_STALL_MS: u32 = 50;
@@ -264,6 +265,7 @@ fn main() -> anyhow::Result<()> {
         radial_endstop,
     };
     let mut brew = Brew::default();
+    let mut trail = nozzle::Trail::default();
     let mut button_state = Button::default();
     let mut last_status_ms = 0u32;
     let mut reboot_at: Option<u32> = None;
@@ -280,6 +282,7 @@ fn main() -> anyhow::Result<()> {
         }
         dev.update(now);
         brew.update(&mut dev);
+        trail.update(&dev);
 
         let mut effects = Vec::new();
         if let Some(press) = button_state.update(button.is_low(), now) {
@@ -299,7 +302,9 @@ fn main() -> anyhow::Result<()> {
 
         if dev.net.wants_status() || now.wrapping_sub(last_status_ms) >= STATUS_PERIOD_MS {
             last_status_ms = now;
-            dev.net.send_status(brew.status(&dev).to_string());
+            let mut status = brew.status(&dev);
+            status["path"] = trail.take_json(now);
+            dev.net.send_status(status.to_string());
         }
         if reboot_at.is_some_and(|t| now.wrapping_sub(t) as i32 >= 0) {
             reset::restart();

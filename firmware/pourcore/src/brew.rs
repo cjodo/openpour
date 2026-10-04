@@ -530,6 +530,8 @@ impl Brew {
         let now = m.now_ms();
         let mut o = Map::new();
         o.insert("t".into(), json!("status"));
+        // Machine time, so the app can play every stream back on one clock.
+        o.insert("ms".into(), json!(now));
         o.insert("state".into(), json!(self.st.name()));
         if self.st == State::Paused {
             o.insert("pausedFrom".into(), json!(self.paused_from.name()));
@@ -566,6 +568,9 @@ impl Brew {
         }
         o.insert("motion".into(), json!(m.motion_mode()));
         o.insert("homed".into(), json!(m.homed()));
+        if let Some(p) = crate::nozzle::position(m) {
+            o.insert("nozzle".into(), crate::nozzle::to_json(p));
+        }
         if !self.error.is_empty() {
             o.insert("error".into(), json!(self.error));
         }
