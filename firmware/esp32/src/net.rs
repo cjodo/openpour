@@ -32,7 +32,7 @@ use esp_idf_svc::wifi::{
     WifiDriver,
 };
 use esp_idf_svc::ws::FrameType;
-use esp_idf_svc::http::server::ws::EspHttpWsDetachedSender;
+use esp_idf_svc::http::server::ws::{EspHttpWsConnection, EspHttpWsDetachedSender};
 use pourcore::settings::Settings;
 use serde_json::{json, Value};
 
@@ -310,15 +310,27 @@ pub fn start(
     // Handlers match in registration order, so specific URIs come first.
     {
         let clients = clients.clone();
+        let clients_for_handler = clients.clone();
         let status_requested = status_requested.clone();
         let tx = tx.clone();
+        // ESP-IDF 5.x answers the handshake itself and doesn't call this handler
+        // for it, so `is_new()` never fires there (esp-idf-svc 0.53 assumes it
+        // does). A client is therefore registered on its first frame too; the
+        // app sends {"cmd":"hello"} as soon as it connects.
+        let register = move |ws: &EspHttpWsConnection| {
+            let session = ws.session();
+            let mut list = clients_for_handler.lock().unwrap();
+            if !list.iter().any(|c| c.session() == session) {
+                if let Ok(sender) = ws.create_detached_sender() {
+                    list.push(sender);
+                    log::info!(target: "http", "WebSocket client {session} connected");
+                    status_requested.store(true, Ordering::Relaxed);
+                }
+            }
+        };
         server.ws_handler("/ws", None, move |ws| {
             if ws.is_new() {
-                log::info!(target: "http", "WebSocket client {} connected", ws.session());
-                if let Ok(sender) = ws.create_detached_sender() {
-                    clients.lock().unwrap().push(sender);
-                }
-                status_requested.store(true, Ordering::Relaxed);
+                register(ws);
                 return Ok::<(), EspError>(());
             }
             if ws.is_closed() {
@@ -333,6 +345,7 @@ pub fn start(
                 Ok((FrameType::Text(false), len)) => {
                     // Text frames are reported with a NUL terminator.
                     let text = buf[..len].strip_suffix(&[0]).unwrap_or(&buf[..len]);
+                    register(ws);
                     if let Ok(line) = core::str::from_utf8(text) {
                         let _ = tx.try_send(line.to_owned());
                     }
