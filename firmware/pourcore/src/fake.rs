@@ -1,11 +1,47 @@
 //! A simulated machine for host tests: the pump fills the cup at a rate set by
 //! its duty, the flow meter counts it, and motion completes instantly.
 
+use std::cell::RefCell;
+use std::sync::Once;
+
 use serde_json::Value;
 
 use crate::machine::{Machine, MotionCmd};
 use crate::recipes::{self, Recipe};
 use crate::settings::Settings;
+
+/// Captures log records per test thread, so tests can assert what was logged.
+struct TestLogger;
+
+thread_local! {
+    static RECORDS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+impl log::Log for TestLogger {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, r: &log::Record) {
+        let line = format!("{} {}: {}", r.level(), r.target(), r.args());
+        RECORDS.with(|v| v.borrow_mut().push(line));
+    }
+    fn flush(&self) {}
+}
+
+/// Starts capturing this thread's log lines, clearing any earlier ones.
+pub fn capture_logs() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        log::set_logger(&TestLogger).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+    });
+    RECORDS.with(|v| v.borrow_mut().clear());
+}
+
+/// Lines logged on this thread since `capture_logs`, as "LEVEL target: message".
+pub fn logged() -> Vec<String> {
+    RECORDS.with(|v| v.borrow().clone())
+}
 
 pub struct FakeMachine {
     pub now: u32,
@@ -141,6 +177,9 @@ impl Machine for FakeMachine {
     }
     fn motion_busy(&self) -> bool {
         false
+    }
+    fn arm_pose(&self) -> (f32, f32) {
+        (0.0, 0.0)
     }
     fn motion_mode(&self) -> &'static str {
         if self.homed { "holding" } else { "released" }

@@ -24,6 +24,11 @@ impl FlowController {
         self.integ = 0.0;
     }
 
+    /// The integral correction currently added to the duty.
+    pub fn integral(&self) -> f32 {
+        self.integ
+    }
+
     pub fn update(&mut self, target_gps: f32, measured_gps: f32, measured_valid: bool, dt: f32) -> f32 {
         if target_gps <= 0.0 {
             return 0.0;

@@ -1,5 +1,6 @@
 //! Commands from the app, the front-panel button and the status LED.
 
+use log::{info, warn};
 use serde_json::{json, Value};
 
 use crate::brew::{Brew, State};
@@ -45,8 +46,12 @@ fn start_brew(brew: &mut Brew, m: &mut impl Machine, id: &str, out: &mut Vec<Eff
 /// Handles one JSON command line from the WebSocket or a REST POST.
 pub fn handle_command(line: &str, brew: &mut Brew, m: &mut impl Machine) -> Vec<Effect> {
     let mut out = Vec::new();
-    let Ok(doc) = serde_json::from_str::<Value>(line) else { return out };
+    let Ok(doc) = serde_json::from_str::<Value>(line) else {
+        warn!(target: "cmd", "not JSON: {:.80}", line);
+        return out;
+    };
     let cmd = doc.get("cmd").and_then(Value::as_str).unwrap_or("");
+    log_command(cmd, &doc);
 
     match cmd {
         "start" => {
@@ -81,6 +86,13 @@ pub fn handle_command(line: &str, brew: &mut Brew, m: &mut impl Machine) -> Vec<
         }
         "calMeter" => match meter::calibrate(m.meter_pulses(), num(&doc, "ml", 0.0)) {
             Some(ppl) => {
+                info!(
+                    target: "cal",
+                    "meter: {} pulses for {} ml measured: {ppl:.0} pulses/L (was {:.0})",
+                    m.meter_pulses(),
+                    num(&doc, "ml", 0.0),
+                    m.settings().flow_pulses_per_litre
+                );
                 m.settings_mut().flow_pulses_per_litre = ppl;
                 m.save_settings();
                 out.push(Effect::info(&format!("Flow meter calibrated at {ppl:.0} pulses per litre.")));
@@ -110,9 +122,45 @@ pub fn handle_command(line: &str, brew: &mut Brew, m: &mut impl Machine) -> Vec<
                 Effect::error("Recipes could not be saved.")
             });
         }
-        _ => {}
+        "" => {}
+        other => warn!(target: "cmd", "unknown command \"{other}\""),
+    }
+    for fx in &out {
+        if let Effect::Notify { kind: "error", msg } = fx {
+            warn!(target: "cmd", "{cmd} refused: {msg}");
+        }
     }
     out
+}
+
+/// One line per command. Bulky or secret payloads are summarised.
+fn log_command(cmd: &str, doc: &Value) {
+    match cmd {
+        "settings" => {
+            let changes: Vec<String> = doc
+                .get("data")
+                .and_then(Value::as_object)
+                .map(|o| {
+                    o.iter()
+                        .map(|(k, v)| if k == "wifiPass" { format!("{k}=***") } else { format!("{k}={v}") })
+                        .collect()
+                })
+                .unwrap_or_default();
+            info!(target: "settings", "changed {}", changes.join(", "));
+        }
+        "saveRecipes" => {
+            let n = doc.get("data").and_then(Value::as_array).map_or(0, Vec::len);
+            info!(target: "cmd", "saveRecipes ({n} recipes)");
+        }
+        _ => {
+            let mut args = doc.clone();
+            if let Some(o) = args.as_object_mut() {
+                o.remove("cmd");
+            }
+            let args = if args.as_object().is_some_and(|o| o.is_empty()) { String::new() } else { format!(" {args}") };
+            info!(target: "cmd", "{cmd}{args}");
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,6 +199,7 @@ impl Button {
 /// Long press: stop.
 pub fn handle_press(press: Press, brew: &mut Brew, m: &mut impl Machine) -> Vec<Effect> {
     let mut out = Vec::new();
+    info!(target: "cmd", "button: {press:?} press while {}", brew.state().name());
     match press {
         Press::Long => {
             m.pump_off();
@@ -199,6 +248,7 @@ mod tests {
 
     #[test]
     fn commands_blocked_while_brewing() {
+        crate::fake::capture_logs();
         let mut m = FakeMachine::default();
         let mut brew = Brew::default();
         handle_command(r#"{"cmd":"start","recipe":"v60-single"}"#, &mut brew, &mut m);
@@ -207,6 +257,9 @@ mod tests {
         assert!(matches!(&fx[0], Effect::Notify { kind: "error", .. }));
         handle_command(r#"{"cmd":"stop"}"#, &mut brew, &mut m);
         assert_eq!(brew.state(), State::Finishing);
+        let log = crate::fake::logged();
+        assert!(log.contains(&r#"INFO cmd: start {"recipe":"v60-single"}"#.to_string()), "{log:#?}");
+        assert!(log.contains(&"WARN cmd: home refused: That isn't available while brewing.".to_string()));
     }
 
     #[test]
@@ -217,8 +270,11 @@ mod tests {
         assert_eq!(fx, vec![Effect::info("Settings saved.")]);
         assert_eq!(m.settings.park_r, 90.0);
         assert_eq!(m.saves, 1);
-        let fx = handle_command(r#"{"cmd":"settings","data":{"wifiSsid":"home"}}"#, &mut brew, &mut m);
+        crate::fake::capture_logs();
+        let fx = handle_command(r#"{"cmd":"settings","data":{"wifiSsid":"home","wifiPass":"hunter2"}}"#, &mut brew, &mut m);
         assert_eq!(fx[0], Effect::Reboot);
+        let log = crate::fake::logged().join("\n");
+        assert!(log.contains("wifiPass=***") && !log.contains("hunter2"), "{log}");
     }
 
     #[test]

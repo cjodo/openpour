@@ -185,6 +185,11 @@ impl Machine for Devices {
         self.motion.mode_name(&self.settings)
     }
 
+    fn arm_pose(&self) -> (f32, f32) {
+        let p = self.motion.pose(&self.settings);
+        (p.theta_deg, p.r)
+    }
+
     fn ap_mode(&self) -> bool {
         self.net.ap_mode()
     }

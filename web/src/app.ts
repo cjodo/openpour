@@ -416,6 +416,8 @@ const ADVANCED_FIELDS: Partial<Record<keyof Settings, string>> = {
   pumpGpsAtFull: 'Pump rate at full power (g/s)',
   pumpMinDuty: 'Pump minimum power (0–1)',
   pumpLagS: 'Pour stop lead time (s)',
+  telemetryHz: 'Telemetry samples per second (1–50)',
+  logDebug: 'Detailed (debug) logging',
   thetaStepsPerDeg: 'Arm steps per degree',
   radialStepsPerMm: 'Carriage steps per mm',
   invertTheta: 'Reverse arm direction',
