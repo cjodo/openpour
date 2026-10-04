@@ -2,12 +2,19 @@
 //! the REST endpoints and the /ws WebSocket. Requests arrive on the HTTP
 //! server's task; anything that changes machine state is queued as a JSON
 //! command line and handled by the main loop.
+//!
+//! Outgoing WebSocket messages go through an outbox to the `ws-tx` thread.
+//! A WebSocket send blocks until the HTTP task has written the frame, which
+//! can take seconds on a slow connection, so the main loop must never send
+//! itself, and nothing may hold the client list while sending (the /ws
+//! handler, on the HTTP task, locks it too).
 
 use std::ffi::CString;
 use std::net::Ipv4Addr;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
@@ -25,7 +32,7 @@ use esp_idf_svc::wifi::{
     WifiDriver,
 };
 use esp_idf_svc::ws::FrameType;
-use esp_idf_svc::http::server::ws::EspHttpWsDetachedSender;
+use esp_idf_svc::http::server::ws::{EspHttpWsConnection, EspHttpWsDetachedSender};
 use pourcore::settings::Settings;
 use serde_json::{json, Value};
 
@@ -37,14 +44,27 @@ const AP_PASSWORD: &str = "pourover";
 const AP_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 4, 1);
 const MAX_SETTINGS_BODY: usize = 4 * 1024;
 const MAX_RECIPES_BODY: usize = 32 * 1024;
+/// Notifications waiting for a slow connection; older ones are dropped and counted.
+const MAX_QUEUED_EVENTS: usize = 32;
 
 type Clients = Arc<Mutex<Vec<EspHttpWsDetachedSender>>>;
+
+/// What the main loop has asked to send, waiting for the `ws-tx` thread.
+#[derive(Default)]
+struct Outbox {
+    /// Only the newest status matters; an unsent one is replaced.
+    status: Option<String>,
+    events: VecDeque<String>,
+    dropped: u32,
+}
+
+type Outgoing = Arc<(Mutex<Outbox>, Condvar)>;
 
 pub struct Net {
     _wifi: BlockingWifi<EspWifi<'static>>,
     _server: EspHttpServer<'static>,
     _mdns: Option<EspMdns>,
-    clients: Clients,
+    outgoing: Outgoing,
     commands: Receiver<String>,
     status_requested: Arc<AtomicBool>,
     /// `GET /api/settings` serves this; the main loop refreshes it on change.
@@ -66,13 +86,70 @@ impl Net {
         self.status_requested.swap(false, Ordering::Relaxed)
     }
 
-    pub fn broadcast(&self, json: &str) {
-        let mut clients = self.clients.lock().unwrap();
-        clients.retain_mut(|c| !c.is_closed() && c.send(FrameType::Text(false), json.as_bytes()).is_ok());
+    /// Queues a status for every client. Never blocks: if the sender thread is
+    /// busy with the outbox this one is skipped, as another follows shortly.
+    pub fn send_status(&self, json: String) {
+        let (outbox, wake) = &*self.outgoing;
+        if let Ok(mut o) = outbox.try_lock() {
+            o.status = Some(json);
+            wake.notify_one();
+        }
+    }
+
+    /// Queues a notification for every client. The lock is only ever held to
+    /// swap the queue, never while sending.
+    pub fn send_event(&self, json: String) {
+        let (outbox, wake) = &*self.outgoing;
+        let mut o = outbox.lock().unwrap();
+        if o.events.len() >= MAX_QUEUED_EVENTS {
+            o.events.pop_front();
+            o.dropped += 1;
+        }
+        o.events.push_back(json);
+        wake.notify_one();
     }
 
     pub fn publish_settings(&self, s: &Settings) {
         *self.settings_json.lock().unwrap() = settings_api_json(s, self.ap_mode);
+    }
+}
+
+/// The `ws-tx` thread: takes whatever the outbox holds and sends it to each
+/// client, from a copy of the client list so the lock is never held while a
+/// send blocks.
+fn send_loop(outgoing: Outgoing, clients: Clients) {
+    let (outbox, wake) = &*outgoing;
+    loop {
+        let (events, status, dropped) = {
+            let mut o = outbox.lock().unwrap();
+            while o.status.is_none() && o.events.is_empty() {
+                o = wake.wait(o).unwrap();
+            }
+            (std::mem::take(&mut o.events), o.status.take(), std::mem::take(&mut o.dropped))
+        };
+        let mut targets = clients.lock().unwrap().clone();
+        if targets.is_empty() {
+            continue;
+        }
+        let mut frames = Vec::with_capacity(events.len() + 2);
+        if dropped > 0 {
+            let msg = format!("{dropped} messages were dropped: the connection is too slow.");
+            frames.push(json!({ "t": "info", "msg": msg }).to_string());
+        }
+        frames.extend(events);
+        frames.extend(status);
+
+        let mut failed = Vec::new();
+        for c in &mut targets {
+            let ok = frames.iter().all(|f| !c.is_closed() && c.send(FrameType::Text(false), f.as_bytes()).is_ok());
+            if !ok {
+                failed.push(c.session());
+            }
+        }
+        if !failed.is_empty() {
+            log::info!(target: "http", "WebSocket client(s) {failed:?} gone, dropping");
+            clients.lock().unwrap().retain(|c| !failed.contains(&c.session()));
+        }
     }
 }
 
@@ -233,15 +310,27 @@ pub fn start(
     // Handlers match in registration order, so specific URIs come first.
     {
         let clients = clients.clone();
+        let clients_for_handler = clients.clone();
         let status_requested = status_requested.clone();
         let tx = tx.clone();
+        // ESP-IDF 5.x answers the handshake itself and doesn't call this handler
+        // for it, so `is_new()` never fires there (esp-idf-svc 0.53 assumes it
+        // does). A client is therefore registered on its first frame too; the
+        // app sends {"cmd":"hello"} as soon as it connects.
+        let register = move |ws: &EspHttpWsConnection| {
+            let session = ws.session();
+            let mut list = clients_for_handler.lock().unwrap();
+            if !list.iter().any(|c| c.session() == session) {
+                if let Ok(sender) = ws.create_detached_sender() {
+                    list.push(sender);
+                    log::info!(target: "http", "WebSocket client {session} connected");
+                    status_requested.store(true, Ordering::Relaxed);
+                }
+            }
+        };
         server.ws_handler("/ws", None, move |ws| {
             if ws.is_new() {
-                log::info!(target: "http", "WebSocket client {} connected", ws.session());
-                if let Ok(sender) = ws.create_detached_sender() {
-                    clients.lock().unwrap().push(sender);
-                }
-                status_requested.store(true, Ordering::Relaxed);
+                register(ws);
                 return Ok::<(), EspError>(());
             }
             if ws.is_closed() {
@@ -256,6 +345,7 @@ pub fn start(
                 Ok((FrameType::Text(false), len)) => {
                     // Text frames are reported with a NUL terminator.
                     let text = buf[..len].strip_suffix(&[0]).unwrap_or(&buf[..len]);
+                    register(ws);
                     if let Ok(line) = core::str::from_utf8(text) {
                         let _ = tx.try_send(line.to_owned());
                     }
@@ -293,11 +383,20 @@ pub fn start(
         }
     })?;
 
+    let outgoing: Outgoing = Arc::default();
+    {
+        let (outgoing, clients) = (outgoing.clone(), clients.clone());
+        std::thread::Builder::new()
+            .name("ws-tx".into())
+            .stack_size(8 * 1024)
+            .spawn(move || send_loop(outgoing, clients))?;
+    }
+
     Ok(Net {
         _wifi: wifi,
         _server: server,
         _mdns: mdns,
-        clients,
+        outgoing,
         commands,
         status_requested,
         settings_json,

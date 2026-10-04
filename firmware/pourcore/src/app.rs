@@ -51,6 +51,10 @@ pub fn handle_command(line: &str, brew: &mut Brew, m: &mut impl Machine) -> Vec<
         return out;
     };
     let cmd = doc.get("cmd").and_then(Value::as_str).unwrap_or("");
+    // Sent by the app when it connects so the firmware registers it; nothing to do.
+    if cmd == "hello" {
+        return out;
+    }
     log_command(cmd, &doc);
 
     match cmd {
@@ -275,6 +279,14 @@ mod tests {
         assert_eq!(fx[0], Effect::Reboot);
         let log = crate::fake::logged().join("\n");
         assert!(log.contains("wifiPass=***") && !log.contains("hunter2"), "{log}");
+    }
+
+    #[test]
+    fn hello_is_accepted_even_while_brewing() {
+        let mut m = FakeMachine::default();
+        let mut brew = Brew::default();
+        handle_command(r#"{"cmd":"start","recipe":"v60-single"}"#, &mut brew, &mut m);
+        assert!(handle_command(r#"{"cmd":"hello"}"#, &mut brew, &mut m).is_empty());
     }
 
     #[test]

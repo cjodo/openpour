@@ -100,6 +100,8 @@ export type ServerMessage = Status | Notice;
 
 /** A command sent over the WebSocket, with its arguments. */
 export type Command =
+  /** Sent on connect so the firmware registers this client (see firmware/esp32/src/net.rs). */
+  | { cmd: 'hello' }
   | { cmd: 'start'; recipe: string }
   | { cmd: 'pause' | 'resume' | 'stop' | 'home' | 'park' | 'center' | 'setCenter' | 'release' }
   | { cmd: 'jog'; dr: number; dtheta: number }

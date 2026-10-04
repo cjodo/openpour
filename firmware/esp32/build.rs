@@ -109,7 +109,7 @@ fn main() {
     }
     src += "];\n";
     src += &format!(
-        "pub static DEFAULT_RECIPES_JSON: &str = include_str!({:?});\n",
+        "#[allow(dead_code)] // Wokwi builds install their own test recipes\npub static DEFAULT_RECIPES_JSON: &str = include_str!({:?});\n",
         web.join("default-recipes.json").display().to_string()
     );
     fs::write(out.join("web_assets.rs"), src).unwrap();
