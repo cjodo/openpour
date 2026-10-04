@@ -66,7 +66,11 @@ async function postJson(url: string, body: unknown): Promise<unknown> {
 function connect() {
   const url = MOCK ? 'mock' : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
   const ws = new app.Socket(url);
-  ws.onopen = () => setConn('online', 'Connected');
+  ws.onopen = () => {
+    setConn('online', 'Connected');
+    // The firmware only learns of a WebSocket client once it sends a frame.
+    ws.send(JSON.stringify({ cmd: 'hello' } satisfies Command));
+  };
   ws.onclose = () => {
     setConn('offline', 'Reconnecting');
     setTimeout(connect, 1500);

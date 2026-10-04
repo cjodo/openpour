@@ -176,6 +176,7 @@ export function createMock(): Transport {
 
   async function command(c: Command) {
     switch (c.cmd) {
+      case 'hello': return;
       case 'start': {
         if (active()) return notify('error', 'A brew is already running.');
         const r = (await ensureRecipes()).find((x) => x.id === c.recipe);
