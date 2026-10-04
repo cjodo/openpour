@@ -157,7 +157,7 @@ main { max-width: 760px; margin: 0 auto; padding: 0 var(--gutter) 24px; }
 .phase { margin: 0 0 auto; font-size: 1.05rem; color: var(--ink-soft); }
 .phase strong { color: var(--ink); font-weight: 600; }
 
-.weight {
+.amount {
   margin: 0;
   font-size: clamp(4rem, 19vw, 7.5rem);
   line-height: 0.9;
@@ -167,7 +167,7 @@ main { max-width: 760px; margin: 0 auto; padding: 0 var(--gutter) 24px; }
   letter-spacing: -0.04em;
   white-space: nowrap;
 }
-.weight .unit { font-size: 0.32em; letter-spacing: 0; margin-left: 0.1em; color: var(--ink-soft); }
+.amount .unit { font-size: 0.32em; letter-spacing: 0; margin-left: 0.1em; color: var(--ink-soft); }
 .of { margin: 6px 0 18px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 
 .stats { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 18px; margin: 0; justify-content: start; }

@@ -1,5 +1,6 @@
-//! Runs a recipe: tare, home, then for each stage pour to the cumulative
-//! target with the stage's flow rate and pattern, wait, and finally park.
+//! Runs a recipe: zero the flow meter, home, then for each stage pour to the
+//! cumulative target with the stage's flow rate and pattern, wait, and finally
+//! park. Also runs the pump and flow-meter calibration dispenses.
 
 use serde_json::{json, Map, Value};
 
@@ -17,6 +18,10 @@ const OVERFLOW_MARGIN_G: f32 = 60.0;
 const FLOW_SETTLE_MS: u32 = 1500;
 const PUMP_CAL_MS: u32 = 10_000;
 const PUMP_CAL_SETTLE_MS: u32 = 2000;
+/// The meter calibration dispenses this much (by the current calibration) ...
+const METER_CAL_G: f32 = 200.0;
+/// ... or runs this long, whichever comes first.
+const METER_CAL_MAX_MS: u32 = 60_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -28,7 +33,7 @@ pub enum State {
     Finishing,
     Done,
     Error,
-    PumpCal,
+    Calibrating,
 }
 
 impl State {
@@ -42,7 +47,7 @@ impl State {
             State::Finishing => "finishing",
             State::Done => "done",
             State::Error => "error",
-            State::PumpCal => "calibrating",
+            State::Calibrating => "calibrating",
         }
     }
 }
@@ -52,6 +57,14 @@ enum CalStep {
     Prepare,
     Run,
     Settle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CalKind {
+    /// Full power for a fixed time: measures the pump's rate.
+    Pump,
+    /// Dispense a known amount into a jug for the user to measure.
+    Meter,
 }
 
 pub struct Brew {
@@ -71,6 +84,7 @@ pub struct Brew {
     flow_check_g: f32,
     fc: FlowController,
     cal_step: CalStep,
+    cal_kind: CalKind,
     error: String,
     message: String,
 }
@@ -93,6 +107,7 @@ impl Default for Brew {
             flow_check_g: 0.0,
             fc: FlowController::default(),
             cal_step: CalStep::Prepare,
+            cal_kind: CalKind::Pump,
             error: String::new(),
             message: String::new(),
         }
@@ -160,9 +175,6 @@ impl Brew {
         let Some(recipe) = m.load_recipe(recipe_id) else {
             return Err("That recipe was not found or has no stages.");
         };
-        if !m.scale_connected() {
-            return Err("The scale is not responding. Check the HX711 wiring.");
-        }
         if m.settings().last_recipe != recipe_id {
             m.settings_mut().last_recipe = recipe_id.to_owned();
             m.save_settings();
@@ -174,7 +186,7 @@ impl Brew {
         self.stage_target = 0.0;
         self.elapsed_ms = 0;
         self.prep_moved = false;
-        m.tare();
+        m.reset_poured();
         if !m.homed() {
             m.motion(MotionCmd::Home);
         }
@@ -183,6 +195,16 @@ impl Brew {
     }
 
     pub fn calibrate_pump(&mut self, m: &mut impl Machine) -> Result<(), &'static str> {
+        self.calibrate(m, CalKind::Pump)
+    }
+
+    /// Dispenses about METER_CAL_G for the user to measure; then the app sends
+    /// the measured amount with the `calMeter` command.
+    pub fn calibrate_meter(&mut self, m: &mut impl Machine) -> Result<(), &'static str> {
+        self.calibrate(m, CalKind::Meter)
+    }
+
+    fn calibrate(&mut self, m: &mut impl Machine, kind: CalKind) -> Result<(), &'static str> {
         if self.active() {
             return Err("Wait for the brew to finish first.");
         }
@@ -190,11 +212,12 @@ impl Brew {
         self.message.clear();
         self.prep_moved = false;
         self.cal_step = CalStep::Prepare;
-        m.tare();
+        self.cal_kind = kind;
+        m.reset_poured();
         if !m.homed() {
             m.motion(MotionCmd::Home);
         }
-        self.enter(State::PumpCal, m.now_ms());
+        self.enter(State::Calibrating, m.now_ms());
         Ok(())
     }
 
@@ -235,13 +258,13 @@ impl Brew {
         }
     }
 
-    /// Homed, scale tared, nozzle sitting at `at`: ready to pour.
+    /// Homed with the nozzle sitting at `at`: ready to pour.
     fn prepared(&mut self, m: &mut impl Machine, at: BedPoint) -> bool {
         if m.homing_failed() {
             self.fail(m, "Homing failed: an endstop never triggered. Check the switches and wiring.");
             return false;
         }
-        if m.scale_busy() || !m.homed() {
+        if !m.homed() {
             return false;
         }
         if !self.prep_moved {
@@ -258,7 +281,7 @@ impl Brew {
         let f = m.flow_gps();
 
         if w > self.recipe.total_water() + OVERFLOW_MARGIN_G {
-            self.fail(m, "The scale reads more water than the recipe holds. Stopped to prevent an overflow.");
+            self.fail(m, "The flow meter counted more water than the recipe holds. Stopped to prevent an overflow.");
             return;
         }
         if should_stop_pour(w, f, m.settings().pump_lag_s, self.stage_target) {
@@ -274,14 +297,14 @@ impl Brew {
 
         if now.wrapping_sub(self.flow_check_ms) >= NO_FLOW_MS {
             if w - self.flow_check_g < NO_FLOW_MIN_G {
-                self.fail(m, "No water reached the scale. Refill the reservoir or check the pump tubing.");
+                self.fail(m, "No water is flowing. Refill the reservoir or check the pump tubing and flow meter.");
                 return;
             }
             self.reset_flow_watchdog(m);
         }
     }
 
-    fn update_pump_cal(&mut self, m: &mut impl Machine, now: u32) {
+    fn update_cal(&mut self, m: &mut impl Machine, now: u32) {
         match self.cal_step {
             CalStep::Prepare => {
                 if self.prepared(m, BedPoint::CENTRE) {
@@ -291,7 +314,12 @@ impl Brew {
                 }
             }
             CalStep::Run => {
-                if now.wrapping_sub(self.state_start_ms) >= PUMP_CAL_MS {
+                let ran = now.wrapping_sub(self.state_start_ms);
+                let done = match self.cal_kind {
+                    CalKind::Pump => ran >= PUMP_CAL_MS,
+                    CalKind::Meter => m.grams() >= METER_CAL_G || ran >= METER_CAL_MAX_MS,
+                };
+                if done {
                     m.pump_off();
                     self.cal_step = CalStep::Settle;
                     self.state_start_ms = now;
@@ -301,14 +329,24 @@ impl Brew {
                 if now.wrapping_sub(self.state_start_ms) < PUMP_CAL_SETTLE_MS {
                     return;
                 }
-                let gps = m.grams() / (PUMP_CAL_MS as f32 / 1000.0);
-                if gps < 0.2 {
-                    self.fail(m, "Pump calibration measured almost no water. Is the reservoir primed?");
+                if m.grams() < 2.0 {
+                    self.fail(m, "The flow meter counted almost no water. Is the reservoir primed and the meter wired?");
                     return;
                 }
-                m.settings_mut().pump_gps_at_full = gps;
-                m.save_settings();
-                self.message = format!("Pump calibrated at {gps:.2} g/s.");
+                match self.cal_kind {
+                    CalKind::Pump => {
+                        let gps = m.grams() / (PUMP_CAL_MS as f32 / 1000.0);
+                        m.settings_mut().pump_gps_at_full = gps;
+                        m.save_settings();
+                        self.message = format!("Pump calibrated at {gps:.2} g/s.");
+                    }
+                    CalKind::Meter => {
+                        self.message = format!(
+                            "The meter counted {:.0} ml. Weigh or measure the water and enter the real amount.",
+                            m.grams()
+                        );
+                    }
+                }
                 self.finish(m, true);
             }
         }
@@ -345,7 +383,7 @@ impl Brew {
                     self.enter(next, now);
                 }
             }
-            State::PumpCal => self.update_pump_cal(m, now),
+            State::Calibrating => self.update_cal(m, now),
             State::Idle | State::Paused | State::Done | State::Error => {}
         }
     }
@@ -359,7 +397,7 @@ impl Brew {
         if self.st == State::Paused {
             o.insert("pausedFrom".into(), json!(self.paused_from.name()));
         }
-        let brewing = self.st != State::Idle && self.st != State::PumpCal && !self.recipe.stages.is_empty();
+        let brewing = self.st != State::Idle && self.st != State::Calibrating && !self.recipe.stages.is_empty();
         if brewing {
             let stage = self.stage();
             o.insert("recipe".into(), json!(self.recipe.id));
@@ -383,9 +421,8 @@ impl Brew {
                 o.insert("waitLeft".into(), json!((stage.wait_s - in_state as f32 / 1000.0).max(0.0)));
             }
         }
-        o.insert("weight".into(), json!(m.grams()));
+        o.insert("poured".into(), json!(m.grams()));
         o.insert("flow".into(), json!(m.flow_gps()));
-        o.insert("scaleOk".into(), json!(m.scale_connected()));
         o.insert("duty".into(), json!(m.pump_duty()));
         if let Some(t) = m.temp_c() {
             o.insert("temp".into(), json!(t));
@@ -461,11 +498,9 @@ mod tests {
     }
 
     #[test]
-    fn refuses_without_scale_or_recipe() {
-        let mut m = FakeMachine { scale_ok: false, ..Default::default() };
+    fn refuses_unknown_recipe() {
+        let mut m = FakeMachine::default();
         let mut b = Brew::default();
-        assert!(b.start(&mut m, "v60-single").is_err());
-        m.scale_ok = true;
         assert!(b.start(&mut m, "nope").is_err());
         assert!(!b.active());
     }
@@ -479,5 +514,16 @@ mod tests {
         run(&mut b, &mut m, 20_000);
         assert_eq!(b.state(), State::Idle);
         assert!((m.settings.pump_gps_at_full - 7.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn meter_calibration_dispenses_and_stops() {
+        let mut m = FakeMachine::default();
+        let mut b = Brew::default();
+        b.calibrate_meter(&mut m).unwrap();
+        run(&mut b, &mut m, 120_000);
+        assert_eq!(b.state(), State::Idle);
+        assert!((m.grams() - METER_CAL_G).abs() < 5.0, "{}", m.grams());
+        assert!(b.status(&m)["message"].as_str().unwrap().contains("counted"));
     }
 }

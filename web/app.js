@@ -10,7 +10,7 @@ const BREWING = new Set(['preparing', 'pouring', 'waiting', 'paused', 'finishing
 const app = {
   recipes: [],
   settings: null,
-  status: { state: 'idle', weight: 0, flow: 0 },
+  status: { state: 'idle', poured: 0, flow: 0 },
   history: [],
   editing: -1,
   sock: null,
@@ -112,7 +112,7 @@ function phaseText(s) {
   const name = s.stageName ? `<strong>${escapeHtml(s.stageName)}</strong>` : '';
   const last = s.stage === s.stages - 1;
   switch (s.state) {
-    case 'preparing': return 'Taring the scale and homing the arm';
+    case 'preparing': return 'Homing the arm';
     case 'pouring': return `${name}, pouring to ${Math.round(s.target)} g`;
     case 'waiting':
       return last ? `${name}, letting it drain` : `${name}, next pour in ${Math.ceil(s.waitLeft ?? 0)} s`;
@@ -120,8 +120,8 @@ function phaseText(s) {
     case 'finishing': return 'Parking the arm';
     case 'done': return 'Brew finished';
     case 'error': return 'Stopped';
-    case 'calibrating': return 'Calibrating the pump';
-    default: return s.scaleOk === false ? 'Scale not connected' : 'Ready';
+    case 'calibrating': return 'Running a calibration dispense';
+    default: return 'Ready';
   }
 }
 
@@ -131,18 +131,22 @@ function escapeHtml(s) {
 
 function renderStatus(s) {
   const prev = app.status.state;
+  if (s.message && s.message !== app.status.message) {
+    toast(s.message);
+    loadSettings(); // a calibration finished and may have changed them
+  }
   app.status = s;
 
   if (s.state === 'preparing' && prev !== 'preparing') app.history = [];
   if (BREWING.has(s.state) && s.state !== 'calibrating' && s.elapsed != null) {
     const last = app.history[app.history.length - 1];
-    if (!last || s.elapsed - last.t >= 0.2) app.history.push({ t: s.elapsed, w: s.weight });
+    if (!last || s.elapsed - last.t >= 0.2) app.history.push({ t: s.elapsed, w: s.poured });
   }
 
   const recipe = activeRecipe();
   const total = s.total ?? (recipe ? totalWater(recipe) : 0);
 
-  $('#weight').textContent = fmt1(s.weight);
+  $('#poured').textContent = fmt1(s.poured);
   $('#total').textContent = total ? Math.round(total) : '–';
   $('#flow').textContent = fmt1(Math.max(0, s.flow));
   $('#elapsed').textContent = clockTime(s.elapsed ?? 0);
@@ -172,7 +176,7 @@ function renderStatus(s) {
   $('#btn-stop').textContent = finished ? 'Dismiss' : 'Stop';
   $('#recipe-select').disabled = brewing;
 
-  $('#scale-weight').textContent = fmt1(s.weight);
+  $('#meter-poured').textContent = fmt1(s.poured);
   $('#motion-state').textContent = s.homed ? s.motion : `${s.motion}, not homed`;
 }
 
@@ -181,7 +185,7 @@ const BEAKER_FULL = 90;
 
 function renderBeaker(recipe, s, total) {
   const fill = $('#beaker-fill');
-  fill.style.height = total ? `${Math.min(100, Math.max(0, (s.weight / total) * BEAKER_FULL))}%` : '0%';
+  fill.style.height = total ? `${Math.min(100, Math.max(0, (s.poured / total) * BEAKER_FULL))}%` : '0%';
 
   const ticks = $('#beaker-ticks');
   const key = recipe ? recipe.id + JSON.stringify(recipe.stages.map((x) => x.water)) : '';
@@ -204,7 +208,7 @@ function renderBeaker(recipe, s, total) {
   for (const t of ticks.children) {
     const cum = +t.dataset.cum;
     t.toggleAttribute('data-current', active && Math.abs(cum - s.target) < 0.01);
-    t.toggleAttribute('data-done', s.weight >= cum - 0.5 && cum <= (s.target ?? 0) + 0.01);
+    t.toggleAttribute('data-done', s.poured >= cum - 0.5 && cum <= (s.target ?? 0) + 0.01);
   }
 }
 
@@ -375,7 +379,7 @@ async function saveRecipes(list, okMsg) {
 // ---------------------------------------------------------------- machine view
 
 const ADVANCED_FIELDS = {
-  scaleCountsPerGram: 'Scale counts per gram',
+  flowPulsesPerLitre: 'Flow meter pulses per litre',
   pumpGpsAtFull: 'Pump rate at full power (g/s)',
   pumpMinDuty: 'Pump minimum power (0–1)',
   pumpLagS: 'Pour stop lead time (s)',
@@ -400,6 +404,7 @@ function renderSettings() {
   const s = app.settings;
   if (!s) return;
   $('#pump-rate').textContent = s.pumpGpsAtFull?.toFixed(2) ?? '–';
+  $('#meter-ppl').textContent = s.flowPulsesPerLitre?.toFixed(0) ?? '–';
   $('#wifi-mode').textContent = s.apMode
     ? 'The machine is running its own access point. Join your home network so you can reach it at ' +
       `${s.hostname}.local from any device.`
@@ -518,10 +523,10 @@ function bind() {
       if (axis === 'r') send('jog', { dr: mm, dtheta: 0 });
       else send('jog', { dr: 0, dtheta: (mm / (app.settings?.centerR || 110)) * (180 / Math.PI) });
     }));
-  $('#btn-cal-scale').addEventListener('click', () => {
-    const grams = +$('#cal-grams').value;
-    if (!(grams > 0)) return toast('Enter the weight in grams.', 'error');
-    send('calScale', { grams });
+  $('#btn-cal-meter').addEventListener('click', () => {
+    const ml = +$('#cal-ml').value;
+    if (!(ml >= 10)) return toast('Enter how much water came out, in ml.', 'error');
+    send('calMeter', { ml });
   });
   $('#wifi-form').addEventListener('submit', async (e) => {
     e.preventDefault();

@@ -30,7 +30,7 @@
 
         <div class="readouts">
           <p id="phase" class="phase">Ready</p>
-          <p class="weight" aria-live="off"><span id="weight">0.0</span><span class="unit">g</span></p>
+          <p class="amount" aria-live="off"><span id="poured">0.0</span><span class="unit">g</span></p>
           <p class="of">of <span id="total">–</span> g</p>
           <dl class="stats">
             <div><dt>Flow</dt><dd><span id="flow">0.0</span> g/s</dd></div>
@@ -42,7 +42,7 @@
 
       <ol id="stages" class="stages" aria-label="Recipe stages"></ol>
 
-      <canvas id="chart" class="chart" height="140" aria-label="Weight over time"></canvas>
+      <canvas id="chart" class="chart" height="140" aria-label="Water poured over time"></canvas>
 
       <p id="brew-error" class="alert" hidden></p>
 
@@ -113,21 +113,21 @@
       </div>
 
       <div class="panel">
-        <h2>Scale</h2>
-        <p class="readout-line">Reading <strong><span id="scale-weight">0.0</span> g</strong></p>
+        <h2>Flow meter</h2>
+        <p class="readout-line">Counted <strong><span id="meter-poured">0.0</span> ml</strong> · <span id="meter-ppl">–</span> pulses per litre</p>
+        <p class="hint">To calibrate: put an empty jug under the nozzle and dispense about 200 ml. Then weigh the water on a kitchen scale (1 g = 1 ml) or read the jug, and enter the real amount.</p>
         <div class="button-row">
-          <button data-cmd="tare">Tare</button>
+          <button data-cmd="meterRun">Dispense ~200 ml</button>
         </div>
-        <p class="hint">To calibrate: tare with the platform empty, place something of known weight on it, then enter that weight.</p>
         <div class="inline-form">
-          <label class="field">Known weight (g) <input id="cal-grams" type="number" min="1" step="0.1" value="500" inputmode="decimal"></label>
-          <button id="btn-cal-scale">Calibrate scale</button>
+          <label class="field">Real amount (ml) <input id="cal-ml" type="number" min="10" step="1" inputmode="decimal"></label>
+          <button id="btn-cal-meter">Calibrate meter</button>
         </div>
       </div>
 
       <div class="panel">
         <h2>Pump</h2>
-        <p class="hint">Put an empty cup on the scale and a full reservoir in place. Calibration runs the pump flat out for 10 seconds.</p>
+        <p class="hint">Calibrate the flow meter first. Put a cup under the nozzle and a full reservoir in place. Calibration runs the pump flat out for 10 seconds.</p>
         <div class="button-row">
           <button data-cmd="prime">Prime 3 s</button>
           <button data-cmd="calPump">Calibrate pump</button>

@@ -3,20 +3,20 @@
 //! calibration. The machine logic lives in ../pourcore; this crate connects
 //! it to the hardware.
 //!
-//! Pins (ESP32 DevKit V1, ESP32-WROOM-32; see docs/wiring.md). GPIO 16/17 are
-//! free on WROOM modules; on WROVER (PSRAM) boards move the HX711.
+//! Pins (ESP32 DevKit V1, ESP32-WROOM-32; see docs/wiring.md). GPIO 16 is
+//! free on WROOM modules; on WROVER (PSRAM) boards move the flow meter.
 //!   theta stepper   STEP 26, DIR 25
 //!   radial stepper  STEP 33, DIR 32
 //!   stepper enable  27 (shared by both drivers, active low)
 //!   endstops        theta 18, radial 19 (normally open to GND)
-//!   HX711           DOUT 16, SCK 17
+//!   flow meter      16 (pulse output, pulled up to 3V3)
 //!   pump PWM        23 (gate of the MOSFET module)
 //!   DS18B20         4 (4.7 kΩ pull-up to 3V3)
 //!   button          13 (momentary to GND)
 //!   status LED      2 (on-board)
 
 mod ds18b20;
-mod hx711;
+mod flowmeter;
 mod net;
 mod pump;
 mod stepper;
@@ -36,14 +36,14 @@ use esp_idf_svc::sys::esp_timer_get_time;
 use pourcore::app::{self, Button, Effect};
 use pourcore::brew::Brew;
 use pourcore::machine::{Machine, MotionCmd};
+use pourcore::meter::FlowMeter;
 use pourcore::motion::{Endstops, Motion};
 use pourcore::recipes::{self, Recipe};
-use pourcore::scale::ScaleFilter;
 use pourcore::settings::Settings;
 use serde_json::Value;
 
 use crate::ds18b20::Ds18b20;
-use crate::hx711::Hx711;
+use crate::flowmeter::PulseCounter;
 use crate::net::Net;
 use crate::pump::Pump;
 use crate::stepper::Stepper;
@@ -61,8 +61,8 @@ type Enable = Box<dyn FnMut(bool)>;
 struct Devices {
     settings: Settings,
     net: Net,
-    hx711: Hx711<'static>,
-    scale: ScaleFilter,
+    pulses: PulseCounter<'static>,
+    meter: FlowMeter,
     thermo: Ds18b20<'static>,
     pump: Pump<'static>,
     motion: Motion<Stepper, Enable>,
@@ -72,13 +72,7 @@ struct Devices {
 
 impl Devices {
     fn update(&mut self, now: u32) {
-        if self.hx711.is_ready() {
-            let raw = self.hx711.read();
-            if let Some(cpg) = self.scale.on_sample(raw, now, self.settings.scale_counts_per_gram) {
-                self.settings.scale_counts_per_gram = cpg;
-                self.save_settings();
-            }
-        }
+        self.meter.on_count(self.pulses.total(), now, self.settings.flow_pulses_per_litre);
         self.thermo.update(now);
         self.pump.update(now);
         let end = Endstops { radial: self.radial_endstop.is_low(), theta: self.theta_endstop.is_low() };
@@ -120,31 +114,23 @@ impl Machine for Devices {
     }
 
     fn grams(&self) -> f32 {
-        self.scale.grams()
+        self.meter.grams()
     }
 
     fn flow_gps(&self) -> f32 {
-        self.scale.flow_gps()
+        self.meter.flow_gps()
     }
 
     fn flow_valid(&self) -> bool {
-        self.scale.flow_valid()
+        self.meter.flow_valid()
     }
 
-    fn scale_connected(&self) -> bool {
-        self.scale.connected(millis())
+    fn meter_pulses(&self) -> u32 {
+        self.meter.pulses()
     }
 
-    fn scale_busy(&self) -> bool {
-        self.scale.busy()
-    }
-
-    fn tare(&mut self) {
-        self.scale.tare();
-    }
-
-    fn calibrate_scale(&mut self, known_grams: f32) {
-        self.scale.calibrate(known_grams);
+    fn reset_poured(&mut self) {
+        self.meter.reset();
     }
 
     fn temp_c(&self) -> Option<f32> {
@@ -227,9 +213,7 @@ fn main() -> anyhow::Result<()> {
     let settings = storage::load_settings();
     storage::ensure_default_recipes(web::DEFAULT_RECIPES_JSON);
 
-    let mut scale = ScaleFilter::default();
-    scale.tare();
-    let hx711 = Hx711::new(PinDriver::input(pins.gpio16, Pull::Floating)?, PinDriver::output(pins.gpio17)?);
+    let pulses = PulseCounter::new(pins.gpio16)?;
     let thermo = Ds18b20::new(PinDriver::input_output_od(pins.gpio4, Pull::Floating)?, millis());
 
     let (theta, radial) = stepper::start(
@@ -249,8 +233,8 @@ fn main() -> anyhow::Result<()> {
     let mut dev = Devices {
         settings,
         net,
-        hx711,
-        scale,
+        pulses,
+        meter: FlowMeter::default(),
         thermo,
         pump,
         motion,

@@ -29,7 +29,7 @@ function corner_positions() = [
        y = [-base_width / 2 + corner_inset, base_width / 2 - corner_inset]) [x, y]
 ];
 
-// 50 x 70 mm double-sided prototype board for the ESP32 + HX711 (M2 holes).
+// 50 x 70 mm double-sided prototype board for the ESP32 (M2 holes).
 proto_board_origin = [-17, -35];
 proto_board_holes = [[2, 2], [46 + 2, 2], [2, 66 + 2], [46 + 2, 66 + 2]];
 button_pos = [base_front - 18, -base_width / 2 + 18];
@@ -46,8 +46,6 @@ module base_tub() {
       for (p = corner_positions()) translate(p) cylinder(d = corner_boss_d, h = tub_height);
       // column socket
       translate([column_x - sock / 2, -sock / 2, 0]) cube([sock, sock, tub_height]);
-      // load cell pedestal under the fixed end
-      translate([lc_x0, -lc_w / 2 - 3, 0]) cube([lc_holes_from_end[1] + 8, lc_w + 6, lc_z0]);
       // proto board standoffs
       for (h = proto_board_holes) translate(proto_board_origin + h) cylinder(d = 6, h = floor_t + 5);
     }
@@ -55,8 +53,6 @@ module base_tub() {
     // column pocket + M5 bolt up into the tapped extrusion end
     translate([column_x - ext / 2 - C, -ext / 2 - C, column_bottom_z]) cube([ext + 2 * C, ext + 2 * C, tub_height]);
     translate([column_x, 0, 0]) counterbored(screw_m5_clear, 10, 4, column_bottom_z);
-    // load cell fixed-end screws, from below
-    for (h = lc_holes_from_end) translate([lc_x0 + h, 0, 0]) counterbored(lc_hole_d, 8.5, 3, lc_z0);
     for (h = proto_board_holes) translate([proto_board_origin[0] + h[0], proto_board_origin[1] + h[1], 1]) cylinder(d = 1.7, h = 10);
     // rear wall: DC barrel jack (panel mount) and ESP32 USB access
     translate([base_back - 1, 40, 20]) rotate([0, 90, 0]) cylinder(d = 11.5 + C, h = wall + 2);
@@ -67,44 +63,26 @@ module base_tub() {
 }
 
 module base_lid() {
-  post = platform_post_size();
   difference() {
-    translate([base_back, -base_width / 2, tub_height]) rounded_box([base_len, base_width, lid_t], 8);
+    union() {
+      translate([base_back, -base_width / 2, tub_height]) rounded_box([base_len, base_width, lid_t], 8);
+      // coaster locating ring, centred under the dripper
+      translate([dripper_offset, 0, lid_top - e]) difference() {
+        cylinder(d = coaster_d + 2 * C + 2 * wall, h = coaster_ring_h + e);
+        translate([0, 0, -1]) cylinder(d = coaster_d + 2 * C, h = coaster_ring_h + 2);
+      }
+    }
     for (p = corner_positions()) translate([p[0], p[1], tub_height - e]) {
       cylinder(d = screw_m3_clear, h = lid_t + 1);
       translate([0, 0, lid_t - 1.8]) cylinder(d1 = screw_m3_clear, d2 = 6.5, h = 1.8 + e);
     }
     translate([column_x - ext / 2 - C, -ext / 2 - C, tub_height - 1]) cube([ext + 2 * C, ext + 2 * C, lid_t + 2]);
-    // platform post passes through with clearance
-    translate([dripper_offset - post[0] / 2 - 4, -post[1] / 2 - 4, tub_height - 1])
-      rounded_box([post[0] + 8, post[1] + 8, lid_t + 2], 3);
     // momentary button (12 mm)
     translate([button_pos[0], button_pos[1], tub_height - 1]) cylinder(d = 12 + C, h = lid_t + 2);
-    // cable pass-through beside the column: motors, endstops, pump, probe
+    // cable pass-through beside the column: motors, endstops, pump, probe, flow meter
     translate([column_x - 8, ext / 2 + 5, tub_height - 1]) rounded_box([16, 10, lid_t + 2], 2);
     // vents over the stepper drivers
     for (i = [0 : 5]) translate([-5 + i * 7, -base_width / 2 + 12, tub_height - 1]) rounded_box([3, 30, lid_t + 2], 1.4);
-  }
-}
-
-// ------------------------------------------------------------------ platform
-
-function platform_post_size() = [lc_holes_from_end[1] + 10, 16];
-
-module platform() {
-  post = platform_post_size();
-  lc_top = lc_z0 + lc_h;
-  difference() {
-    union() {
-      translate([dripper_offset, 0, platform_bottom]) cylinder(d = platform_d, h = platform_t);
-      translate([dripper_offset - post[0] / 2, -post[1] / 2, lc_top]) cube([post[0], post[1], platform_bottom - lc_top + e]);
-    }
-    translate([dripper_offset, 0, platform_top - coaster_recess]) cylinder(d = coaster_d + 2 * C, h = coaster_recess + 1);
-    // free-end screws: short M4 reached down a socket-wrench bore
-    for (s = [-1, 1]) translate([dripper_offset + s * (lc_holes_from_end[1] - lc_holes_from_end[0]) / 2, 0, lc_top - e]) {
-      cylinder(d = lc_hole_d, h = 10);
-      translate([0, 0, 6]) cylinder(d = 8.5, h = 100);
-    }
   }
 }
 
@@ -268,5 +246,23 @@ module pump_bracket() {
     }
     for (x = [8 : 11 : 52]) hull() for (y = [14, 62]) translate([x, y, -1]) cylinder(d = screw_m3_clear, h = 6);
     for (z = [10, 22]) translate([30, -1, z]) rotate([-90, 0, 0]) cylinder(d = screw_m5_clear, h = 6);
+  }
+}
+
+// Holds the flow meter on the column with two M5 T-nuts, barbs vertical so
+// it stays full of water; two cable ties go through the slots around the body.
+module meter_clip() {
+  w = meter_body[1] + 2 * wall;
+  difference() {
+    union() {
+      cube([w + 20, 4, 40]);                       // plate on the column
+      translate([10, 0, 0]) cube([w, meter_body[2] / 2 + 4, 40]);  // cradle
+    }
+    // body seat
+    translate([10 + wall - C, 4, -1]) cube([meter_body[1] + 2 * C, meter_body[2], 42]);
+    // cable-tie slots
+    for (z = [8, 28]) translate([5, -1, z]) cube([w + 10, meter_body[2] + 10, 4]);
+    // T-nut screws either side of the cradle
+    for (x = [5, w + 15]) translate([x, -1, 20]) rotate([-90, 0, 0]) cylinder(d = screw_m5_clear, h = 6);
   }
 }

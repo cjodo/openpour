@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use crate::brew::{Brew, State};
 use crate::kinematics::BedPoint;
 use crate::machine::{Machine, MotionCmd};
+use crate::meter;
 
 const LONG_PRESS_MS: u32 = 1500;
 const DEBOUNCE_MS: u32 = 30;
@@ -59,7 +60,6 @@ pub fn handle_command(line: &str, brew: &mut Brew, m: &mut impl Machine) -> Vec<
             brew.stop(m);
         }
         _ if brew.active() => out.push(Effect::error("That isn't available while brewing.")),
-        "tare" => m.tare(),
         "home" => m.motion(MotionCmd::Home),
         "park" => m.motion(MotionCmd::Park),
         "center" => m.motion(MotionCmd::MoveToBed(BedPoint::CENTRE)),
@@ -74,13 +74,19 @@ pub fn handle_command(line: &str, brew: &mut Brew, m: &mut impl Machine) -> Vec<
             let duty = num(&doc, "duty", 1.0).clamp(0.0, 1.0);
             m.pump_run_for(duty, (seconds * 1000.0) as u32);
         }
-        "calScale" => {
-            let grams = num(&doc, "grams", 0.0);
-            if grams > 0.0 {
-                m.calibrate_scale(grams);
-                out.push(Effect::info("Calibrating the scale. Keep the weight still."));
+        "meterRun" => {
+            if let Err(e) = brew.calibrate_meter(m) {
+                out.push(Effect::error(e));
             }
         }
+        "calMeter" => match meter::calibrate(m.meter_pulses(), num(&doc, "ml", 0.0)) {
+            Some(ppl) => {
+                m.settings_mut().flow_pulses_per_litre = ppl;
+                m.save_settings();
+                out.push(Effect::info(&format!("Flow meter calibrated at {ppl:.0} pulses per litre.")));
+            }
+            None => out.push(Effect::error("Dispense some water first, then enter how much came out.")),
+        },
         "calPump" => {
             if let Err(e) = brew.calibrate_pump(m) {
                 out.push(Effect::error(e));
@@ -242,5 +248,23 @@ mod tests {
         assert!(led_on(State::Idle, true, 1500));
         assert!(led_on(State::Pouring, false, 0));
         assert!(led_on(State::Error, false, 125) != led_on(State::Error, false, 250));
+    }
+
+    #[test]
+    fn meter_calibration_finds_the_real_factor() {
+        let mut m = FakeMachine { true_ppl: 2200.0, ..Default::default() };
+        let mut brew = Brew::default();
+        let fx = handle_command(r#"{"cmd":"calMeter","ml":200}"#, &mut brew, &mut m);
+        assert!(matches!(&fx[0], Effect::Notify { kind: "error", .. }));
+        handle_command(r#"{"cmd":"meterRun"}"#, &mut brew, &mut m);
+        while brew.active() {
+            m.tick(10);
+            brew.update(&mut m);
+        }
+        let jug = m.water;
+        handle_command(&format!(r#"{{"cmd":"calMeter","ml":{jug}}}"#), &mut brew, &mut m);
+        let ppl = m.settings.flow_pulses_per_litre;
+        assert!((ppl - 2200.0).abs() < 10.0, "{ppl}");
+        assert!((m.grams() - jug).abs() < 1.0);
     }
 }

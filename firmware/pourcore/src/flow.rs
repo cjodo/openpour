@@ -1,4 +1,4 @@
-//! Pump flow control. The scale measures what actually landed, so the pump
+//! Pump flow control. The flow meter counts what actually passed, so the pump
 //! does not need to be precise: duty = feed-forward from the calibrated pump
 //! rate + a slow integral correction from the measured flow.
 
@@ -37,8 +37,8 @@ impl FlowController {
     }
 }
 
-/// True once the water already in flight (plus scale latency) will reach the
-/// target, so the pump should stop now.
+/// True once the water still coming (meter latency + pump coast-down) will
+/// reach the target, so the pump should stop now.
 pub fn should_stop_pour(grams: f32, flow_gps: f32, lag_s: f32, target_g: f32) -> bool {
     grams + flow_gps.max(0.0) * lag_s >= target_g
 }

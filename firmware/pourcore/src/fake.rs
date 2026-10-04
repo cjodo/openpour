@@ -1,5 +1,5 @@
 //! A simulated machine for host tests: the pump fills the cup at a rate set by
-//! its duty, the scale sees it, and motion completes instantly.
+//! its duty, the flow meter counts it, and motion completes instantly.
 
 use serde_json::Value;
 
@@ -12,18 +12,20 @@ pub struct FakeMachine {
     pub settings: Settings,
     pub saves: u32,
     pub recipes: Value,
-    /// Grams actually in the cup.
+    /// Grams actually pumped into the cup.
     pub water: f32,
     /// Real pump rate at full duty (the settings hold the calibrated guess).
     pub true_gps: f32,
     /// Pump runs but nothing comes out.
     pub dry: bool,
-    pub scale_ok: bool,
-    pub tare_g: f32,
+    /// The meter's real pulses per litre (the settings hold the calibrated guess).
+    pub true_ppl: f32,
+    /// Pulses counted since the last reset.
+    pub pulses: f32,
     pub pump_duty: f32,
     pub pump_stop_at: Option<u32>,
     pub homed: bool,
-    /// Grams the scale reported over the last second, for the flow estimate.
+    /// Grams the meter reported over the last second, for the flow estimate.
     pub history: Vec<(u32, f32)>,
 }
 
@@ -37,8 +39,8 @@ impl Default for FakeMachine {
             water: 0.0,
             true_gps: 5.0,
             dry: false,
-            scale_ok: true,
-            tare_g: 0.0,
+            true_ppl: Settings::default().flow_pulses_per_litre,
+            pulses: 0.0,
             pump_duty: 0.0,
             pump_stop_at: None,
             homed: false,
@@ -54,7 +56,9 @@ impl FakeMachine {
             self.pump_off();
         }
         if !self.dry {
-            self.water += self.pump_duty * self.true_gps * ms as f32 / 1000.0;
+            let g = self.pump_duty * self.true_gps * ms as f32 / 1000.0;
+            self.water += g;
+            self.pulses += g * self.true_ppl / 1000.0;
         }
         let g = self.grams();
         self.history.push((self.now, g));
@@ -90,7 +94,7 @@ impl Machine for FakeMachine {
         true
     }
     fn grams(&self) -> f32 {
-        self.water - self.tare_g
+        self.meter_pulses() as f32 * 1000.0 / self.settings.flow_pulses_per_litre
     }
     fn flow_gps(&self) -> f32 {
         match (self.history.first(), self.history.last()) {
@@ -101,16 +105,13 @@ impl Machine for FakeMachine {
     fn flow_valid(&self) -> bool {
         self.history.len() > 50
     }
-    fn scale_connected(&self) -> bool {
-        self.scale_ok
+    fn meter_pulses(&self) -> u32 {
+        self.pulses as u32
     }
-    fn scale_busy(&self) -> bool {
-        false
+    fn reset_poured(&mut self) {
+        self.pulses = 0.0;
+        self.history.clear();
     }
-    fn tare(&mut self) {
-        self.tare_g = self.water;
-    }
-    fn calibrate_scale(&mut self, _known_grams: f32) {}
     fn temp_c(&self) -> Option<f32> {
         Some(93.0)
     }

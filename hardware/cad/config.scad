@@ -29,20 +29,14 @@ screw_m3_clear = 3.4;
 screw_m4_clear = 4.4;
 screw_m5_clear = 5.4;
 
-/* [Load cell: measure yours] */
-lc_len = 80;
-lc_w = 12.7;
-lc_h = 12.7;
-lc_holes_from_end = [5, 20];  // centre of each mounting hole, from each end
-lc_hole_d = screw_m4_clear;   // M4 on most 1-5 kg bar cells (some use M5)
-lc_pedestal = 6;              // lifts the cell so the free end can flex
-
-/* [Platform] */
-platform_d = 100;
-platform_t = 5;
-platform_gap = 4;            // above the lid
+/* [Cup rest] */
 coaster_d = 95;              // cork/silicone coaster: printed parts must not touch hot cups
-coaster_recess = 2;
+coaster_t = 4;
+coaster_ring_h = 2;          // locating ring on the lid keeps the coaster under the dripper
+
+/* [Flow meter: measure yours] */
+meter_body = [45, 30, 28];   // length along the flow x width x height, without the barbs
+meter_barb_len = 12;         // each end
 
 /* [Column, 2020 extrusion] */
 ext = 20;
@@ -99,14 +93,10 @@ switch_hole_d = 2.2;
 
 // ---------------------------------------------------------------- derived
 lid_top = tub_height + lid_t;
-platform_bottom = lid_top + platform_gap;
-platform_top = platform_bottom + platform_t;
-nozzle_tip_z = platform_top + cup_height + dripper_height + nozzle_clearance;
+cup_base_z = lid_top + coaster_t;
+nozzle_tip_z = cup_base_z + cup_height + dripper_height + nozzle_clearance;
 beam_bottom_z = nozzle_tip_z + nozzle_drop + holder_t + carriage_h;
 head_bottom_z = beam_bottom_z + hub_h + head_gap;
 head_top_z = head_bottom_z + head_h;
 column_bottom_z = tub_height - column_socket_depth;
 column_len = ceil((head_top_z - column_bottom_z) / 10) * 10;  // cut your 2020 to this
-
-lc_x0 = dripper_offset + (lc_holes_from_end[0] + lc_holes_from_end[1]) / 2 - lc_len;  // free-end holes centred under the dripper
-lc_z0 = floor_t + lc_pedestal;

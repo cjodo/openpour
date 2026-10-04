@@ -39,12 +39,14 @@ module mgn12h_carriage() {
   color("#5b6670") translate([-22.7, -13.5, 0]) cube([45.4, 27, 10]);
 }
 
-module load_cell(len, w, h) {
-  color("#c7c9a0") cube([len, w, h]);
+module coaster(d, t = 4) {
+  color("#b98c5a") cylinder(d = d, h = t);
 }
 
-module coaster(d) {
-  color("#b98c5a") cylinder(d = d, h = 4);
+// Inline hall-effect flow meter, flow along +X.
+module flow_meter(body, barb) {
+  color("#3b3f45") translate([0, -body[1] / 2, -body[2] / 2]) cube(body);
+  color("#c9ccd0") for (x = [-barb, body[0]]) translate([x, 0, 0]) rotate([0, 90, 0]) cylinder(d = 6, h = barb);
 }
 
 module mug(h = 110, d = 80) {

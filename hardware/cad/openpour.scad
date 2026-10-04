@@ -8,7 +8,7 @@ use <vitamins.scad>
 include <parts.scad>
 
 /* [View] */
-part = "assembly";  // [assembly, base_tub, base_lid, platform, head, arm_root, arm_tip, nozzle_holder, switch_bracket, pump_bracket]
+part = "assembly";  // [assembly, base_tub, base_lid, head, arm_root, arm_tip, nozzle_holder, switch_bracket, pump_bracket, meter_clip]
 arm_theta = 0;      // [-78:1:25]
 carriage_r = 110;   // [66:1:175]
 show_cup = true;
@@ -21,8 +21,6 @@ else print_part(part);
 module print_part(name) {
   if (name == "base_tub") base_tub();
   if (name == "base_lid") translate([0, 0, -tub_height]) base_lid();
-  if (name == "platform")  // upside down: the coaster face prints on the bed
-    translate([0, 0, platform_top]) rotate([180, 0, 0]) platform();
   if (name == "head") translate([0, 0, -head_bottom_z]) head();
   if (name == "arm_root") arm_root();
   if (name == "arm_tip") translate([0, 0, 6]) rotate([180, 0, 0]) arm_tip();
@@ -30,6 +28,7 @@ module print_part(name) {
     translate([0, 0, carriage_h + holder_t]) nozzle_holder();
   if (name == "switch_bracket") switch_bracket();
   if (name == "pump_bracket") pump_bracket();
+  if (name == "meter_clip") rotate([90, 0, 0]) meter_clip();  // plate on the bed
 }
 
 module arm_assembly() {
@@ -51,11 +50,16 @@ module arm_assembly() {
 module assembly() {
   color("#e2e6e4") base_tub();
   color("#cfd6d3") base_lid();
-  color("#2e7da6") platform();
-  translate([dripper_offset, 0, platform_top - coaster_recess]) coaster(coaster_d);
-  translate([lc_x0, -lc_w / 2, lc_z0]) load_cell(lc_len, lc_w, lc_h);
+  translate([dripper_offset, 0, lid_top]) coaster(coaster_d, coaster_t);
 
   translate([column_x, 0, column_bottom_z]) ext2020(column_len);
+  // flow meter on the column's side face, between the pump and the nozzle
+  meter_z = head_bottom_z - 110;  // well below the arm and its pulleys
+  translate([column_x, -ext / 2, meter_z]) rotate([0, 0, 180]) translate([-(meter_body[1] + 2 * wall + 20) / 2, 0, 0]) {
+    color("#2e7da6") meter_clip();
+    translate([10 + wall + meter_body[1] / 2, 4 + meter_body[2] / 2, 20 - meter_body[0] / 2])
+      rotate([0, 0, 90]) rotate([0, -90, 0]) flow_meter(meter_body, meter_barb_len);
+  }
   color("#e2e6e4") head();
   translate([0, 0, head_top_z]) mirror([0, 0, 1]) nema17();  // face down on the head
   for (z = [head_top_z - coupler_len - collar_t - 3 - bearing_t, head_bottom_z])
@@ -64,7 +68,7 @@ module assembly() {
 
   translate([0, 0, beam_bottom_z]) rotate(arm_theta) arm_assembly();
 
-  if (show_cup) translate([dripper_offset, 0, platform_top]) {
+  if (show_cup) translate([dripper_offset, 0, cup_base_z]) {
     mug(cup_height);
     translate([0, 0, cup_height]) dripper(dripper_height);
   }

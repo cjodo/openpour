@@ -7,12 +7,13 @@ const params = new URLSearchParams(location.search);
 const SPEED = Math.max(0.25, +params.get('speed') || 1);
 const TICK_MS = 50;
 const REAL_PUMP_GPS = 6.6;   // what the "real" pump does at full power
-const TRANSIT_S = 0.4;       // nozzle to scale
+const REAL_METER_PPL = 2010; // what the "real" flow meter does (settings start at the datasheet value)
+const METER_LAG_S = 0.1;     // pump coast-down after it is switched off
 
 export function createMock() {
   const settings = {
     hostname: 'openpour', lastRecipe: '', wifiSsid: '', apMode: true,
-    scaleCountsPerGram: 420, pumpGpsAtFull: 6.0, pumpMinDuty: 0.25, pumpLagS: 0.6,
+    flowPulsesPerLitre: 1925, pumpGpsAtFull: 6.0, pumpMinDuty: 0.25, pumpLagS: 0.15,
     thetaStepsPerDeg: 8.889, radialStepsPerMm: 80, invertTheta: false, invertRadial: false,
     thetaHomeDeg: -75, radialHomeMm: 66, thetaMinDeg: -78, thetaMaxDeg: 25,
     radialMinMm: 66, radialMaxMm: 175, centerR: 110, centerThetaDeg: 0, parkR: 80, parkThetaDeg: -60,
@@ -22,9 +23,9 @@ export function createMock() {
 
   const sim = {
     state: 'idle', pausedFrom: null, recipe: null, stage: 0, target: 0, inState: 0,
-    elapsed: 0, weight: 0, offset: 0, duty: 0, temp: 94.5, homed: false, motion: 'released',
-    error: '', message: '', primeLeft: 0, calStep: '',
-    inFlight: [], hist: [],
+    elapsed: 0, pulses: 0, duty: 0, temp: 94.5, homed: false, motion: 'released',
+    error: '', message: '', primeLeft: 0, calStep: '', calKind: '',
+    coast: 0, hist: [],
   };
 
   async function ensureRecipes() {
@@ -35,7 +36,8 @@ export function createMock() {
   const enter = (s) => { sim.state = s; sim.inState = 0; };
   const stage = () => sim.recipe.stages[sim.stage];
   const total = () => sim.recipe.stages.reduce((a, s) => a + s.water, 0);
-  const grams = () => sim.weight - sim.offset;
+  const grams = () => (sim.pulses * 1000) / settings.flowPulsesPerLitre;
+  const resetMeter = () => { sim.pulses = 0; sim.hist = []; };
 
   function flow() {
     const h = sim.hist;
@@ -75,14 +77,13 @@ export function createMock() {
     sim.inState += dt;
     sim.temp = Math.max(70, sim.temp - 0.004 * dt);
 
-    // Water leaves the nozzle now and lands on the scale TRANSIT_S later.
+    // The meter counts water as it is pumped; the pump coasts briefly after stopping.
     if (sim.primeLeft > 0) {
       sim.primeLeft -= dt;
       if (sim.primeLeft <= 0) sim.duty = 0;
     }
-    sim.inFlight.push({ at: TRANSIT_S, g: sim.duty * REAL_PUMP_GPS * dt });
-    for (const p of sim.inFlight) p.at -= dt;
-    while (sim.inFlight.length && sim.inFlight[0].at <= 0) sim.weight += sim.inFlight.shift().g;
+    sim.coast = sim.duty > 0 ? sim.duty : Math.max(0, sim.coast - dt / METER_LAG_S);
+    sim.pulses += (Math.max(sim.duty, sim.coast) * REAL_PUMP_GPS * dt * REAL_METER_PPL) / 1000;
     const t = performance.now() / 1000 * SPEED;
     sim.hist.push({ t, w: grams() });
     while (sim.hist.length > 60) sim.hist.shift();
@@ -90,10 +91,6 @@ export function createMock() {
     switch (sim.state) {
       case 'preparing':
         sim.motion = sim.inState < 2 ? 'homing' : 'moving';
-        if (!sim.tared) {
-          sim.offset = sim.weight;
-          sim.tared = true;
-        }
         if (sim.inState >= 3) {
           sim.homed = true;
           beginStage(0);
@@ -127,18 +124,24 @@ export function createMock() {
         break;
       case 'calibrating':
         if (sim.calStep === 'prepare' && sim.inState >= 2) {
-          sim.offset = sim.weight;
+          resetMeter();
           sim.homed = true;
           sim.duty = 1;
           sim.calStep = 'run';
           sim.inState = 0;
-        } else if (sim.calStep === 'run' && sim.inState >= 10) {
+        } else if (sim.calStep === 'run' && (sim.calKind === 'meter' ? grams() >= 200 : sim.inState >= 10)) {
           sim.duty = 0;
           sim.calStep = 'settle';
           sim.inState = 0;
         } else if (sim.calStep === 'settle' && sim.inState >= 2) {
-          settings.pumpGpsAtFull = +(grams() / 10).toFixed(2);
-          sim.message = `Pump calibrated at ${settings.pumpGpsAtFull.toFixed(2)} g/s.`;
+          if (sim.calKind === 'meter') {
+            const real = (sim.pulses * 1000) / REAL_METER_PPL;
+            sim.message = `The meter counted ${grams().toFixed(0)} ml. Weigh or measure the water and enter the real amount.`;
+            console.info(`[mock] the jug really holds ${real.toFixed(0)} ml`);
+          } else {
+            settings.pumpGpsAtFull = +(grams() / 10).toFixed(2);
+            sim.message = `Pump calibrated at ${settings.pumpGpsAtFull.toFixed(2)} g/s.`;
+          }
           sim.toIdle = true;
           finish();
         }
@@ -148,7 +151,7 @@ export function createMock() {
 
   function status() {
     const s = {
-      t: 'status', state: sim.state, weight: grams(), flow: flow(), scaleOk: true, duty: sim.duty,
+      t: 'status', state: sim.state, poured: grams(), flow: flow(), duty: sim.duty,
       temp: sim.temp, motion: sim.motion, homed: sim.homed,
     };
     if (sim.state === 'paused') s.pausedFrom = sim.pausedFrom;
@@ -175,8 +178,8 @@ export function createMock() {
         const r = (await ensureRecipes()).find((x) => x.id === a.recipe);
         if (!r || !r.stages.length) return notify('error', 'That recipe was not found or has no stages.');
         settings.lastRecipe = r.id;
-        Object.assign(sim, { recipe: r, stage: 0, target: 0, elapsed: 0, error: '', message: '', toIdle: false, tared: false });
-        sim.weight = 380; // a mug and dripper went on the platform
+        Object.assign(sim, { recipe: r, stage: 0, target: 0, elapsed: 0, error: '', message: '', toIdle: false });
+        resetMeter();
         enter('preparing');
         return;
       }
@@ -206,7 +209,6 @@ export function createMock() {
     }
     if (active()) return notify('error', "That isn't available while brewing.");
     switch (cmd) {
-      case 'tare': sim.offset = sim.weight; return;
       case 'home': sim.motion = 'homing'; setTimeout(() => { sim.homed = true; sim.motion = 'holding'; }, 2500 / SPEED); return;
       case 'park': case 'center': case 'jog':
         if (!sim.homed) return notify('error', 'Home the arm first.');
@@ -215,11 +217,16 @@ export function createMock() {
       case 'setCenter': return notify('info', 'Dripper centre saved.');
       case 'release': sim.homed = false; sim.motion = 'released'; return;
       case 'prime': sim.duty = a.duty ?? 1; sim.primeLeft = a.seconds ?? 3; return;
-      case 'calScale': return notify('info', 'Calibrating the scale. Keep the weight still.');
-      case 'calPump':
+      case 'calMeter': {
+        const ml = +a.ml;
+        if (!(sim.pulses >= 50 && ml >= 10)) return notify('error', 'Dispense some water first, then enter how much came out.');
+        settings.flowPulsesPerLitre = Math.round((sim.pulses * 1000) / ml);
+        return notify('info', `Flow meter calibrated at ${settings.flowPulsesPerLitre} pulses per litre.`);
+      }
+      case 'calPump': case 'meterRun':
         sim.message = '';
         sim.calStep = 'prepare';
-        sim.weight = 300;
+        sim.calKind = cmd === 'meterRun' ? 'meter' : 'pump';
         return enter('calibrating');
     }
   }

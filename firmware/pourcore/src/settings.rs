@@ -14,13 +14,13 @@ pub struct Settings {
     pub hostname: String,
     pub last_recipe: String,
 
-    // Scale (HX711 + bar load cell). Calibrate from the app.
-    pub scale_counts_per_gram: f32,
+    // Flow meter between pump and nozzle. Calibrate from the app.
+    pub flow_pulses_per_litre: f32,
 
     // Pump. pump_gps_at_full is measured by the pump calibration.
     pub pump_gps_at_full: f32,
     pub pump_min_duty: f32,
-    /// Water in flight + scale latency when stopping.
+    /// Meter latency + pump coast-down when stopping.
     pub pump_lag_s: f32,
 
     // Motion. Direct-drive theta (NEMA17, 1/16 microstep), GT2 20T radial belt.
@@ -51,10 +51,10 @@ impl Default for Settings {
             wifi_pass: String::new(),
             hostname: "openpour".into(),
             last_recipe: String::new(),
-            scale_counts_per_gram: 420.0,
+            flow_pulses_per_litre: 1925.0,
             pump_gps_at_full: 6.0,
             pump_min_duty: 0.25,
-            pump_lag_s: 0.6,
+            pump_lag_s: 0.15,
             theta_steps_per_deg: 200.0 * 16.0 / 360.0,
             radial_steps_per_mm: 200.0 * 16.0 / 40.0,
             invert_theta: false,
@@ -123,7 +123,7 @@ macro_rules! app_fields {
 app_fields! {
     hostname => "hostname",
     last_recipe => "lastRecipe",
-    scale_counts_per_gram => "scaleCountsPerGram",
+    flow_pulses_per_litre => "flowPulsesPerLitre",
     pump_gps_at_full => "pumpGpsAtFull",
     pump_min_duty => "pumpMinDuty",
     pump_lag_s => "pumpLagS",
@@ -217,7 +217,7 @@ mod tests {
         }));
         assert!(!changed);
         assert_eq!(s.center_r, 120.0);
-        assert_eq!(s.pump_lag_s, 0.6);
+        assert_eq!(s.pump_lag_s, 0.15);
         assert!(s.invert_theta);
         assert_eq!(s.park_r, 80.0);
     }

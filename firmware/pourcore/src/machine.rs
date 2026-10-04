@@ -33,13 +33,13 @@ pub trait Machine {
     /// Replaces the whole recipe file. `recipes` must be an array.
     fn save_recipes(&mut self, recipes: &Value) -> bool;
 
+    /// Water through the flow meter since `reset_poured`. 1 ml = 1 g.
     fn grams(&self) -> f32;
     fn flow_gps(&self) -> f32;
     fn flow_valid(&self) -> bool;
-    fn scale_connected(&self) -> bool;
-    fn scale_busy(&self) -> bool;
-    fn tare(&mut self);
-    fn calibrate_scale(&mut self, known_grams: f32);
+    /// Raw meter pulses since `reset_poured`, for calibration.
+    fn meter_pulses(&self) -> u32;
+    fn reset_poured(&mut self);
 
     fn temp_c(&self) -> Option<f32>;
 
