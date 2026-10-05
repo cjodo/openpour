@@ -19,6 +19,19 @@ laptop browser, with no app store and no cloud.
 - **Parametric.** Set your cup and dripper heights in one OpenSCAD file and
   the column length, head position and parts follow.
 
+## Why
+
+Automatic pour-over machines exist, but the commercial ones are expensive and
+closed: proprietary parts, companion apps or cloud accounts, and little room to
+repair or change them. OpenPour goes the other way. It's built from parts you
+can buy anywhere and a body you print yourself, it's controlled from any
+browser, and everything is open: the CAD, the firmware and the app.
+
+It's also a learning project, built in the open: a way to work through
+embedded Rust, motion control, flow measurement and mechanical design on
+something real, and to leave a record that others can learn from, build and
+improve.
+
 ## How it works
 
 ```
