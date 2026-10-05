@@ -7,3 +7,4 @@ hardware/cad/preview.png
 web/node_modules/
 web/dist/
 firmware/sim/data/
+hardware/render/out/
