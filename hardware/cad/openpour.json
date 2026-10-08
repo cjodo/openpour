@@ -1,0 +1,12 @@
+{
+    "parameterSets": {
+        "Swung": {
+            "arm_theta": "-32",
+            "carriage_r": "175",
+            "component": "all",
+            "part": "nozzle_holder",
+            "show_cup": "true"
+        }
+    },
+    "fileFormatVersion": "1"
+}
