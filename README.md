@@ -42,7 +42,6 @@ just early enough that the pump's coast-down lands on target.
 | Path | What |
 |---|---|
 | `hardware/cad/` | OpenSCAD model. `config.scad` holds every dimension; `make` exports STLs |
-| `hardware/render/` | Renders of the assembled machine: per-component STL export and a Blender scene script ([README](hardware/render/README.md)) |
 | `firmware/` | ESP32 firmware in Rust: `pourcore/` holds the hardware-independent logic, `esp32/` runs it on ESP-IDF, `sim/` runs it on a PC against simulated hardware |
 | `web/` | The control app: TypeScript (`src/`) bundled with esbuild into `dist/`, which the firmware embeds at build time |
 | `docs/` | [BOM](docs/BOM.md), [wiring](docs/wiring.md), [assembly](docs/assembly.md), [calibration](docs/calibration.md) |

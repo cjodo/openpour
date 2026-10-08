@@ -1,7 +1,7 @@
 #!/bin/sh
 # Exports the assembled machine as one STL per component, all in assembly
 # coordinates (mm, Z up), so they import already in place and each can get its
-# own material. Used by blender/scene.py; see README.md.
+# own material.
 #
 #   hardware/render/export.sh [-o DIR] [-D 'var=value' ...]
 #
@@ -40,5 +40,4 @@ echo $components | tr ' ' '\n' | xargs -P "$jobs" -I{} sh -c \
   "openscad -q $defines -D 'part=\"assembly\"' -D 'component=\"{}\"' -o '$out/{}.stl' '$scad' 2>/dev/null || rm -f '$out/{}.stl'"
 
 n=$(ls "$out"/*.stl 2>/dev/null | wc -l)
-echo "Wrote $n STL files. Open them in Blender with:"
-echo "  blender --python $here/blender/scene.py -- $out"
+echo "Wrote $n STL files."
