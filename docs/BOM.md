@@ -81,24 +81,36 @@ about 80 °C, are not food-safe, and lose accuracy below about 300 mL/min.
 | 4 | 10 mm self-adhesive rubber feet | Base |
 
 Expect about **US$185–235 / CA$260–330 / €165–210** total with the pump
-and jug, less if you have printer leftovers.
+and jug, less if you have printer leftovers. Filament for the printed parts
+adds about US$11–15 / CA$16–21 / €10–13 (see [Filament](#filament)).
 
 ## Printed parts
 
 Export with `make` in `hardware/cad` (or open `openpour.scad` and pick a
 `part`). Print in PETG or ASA at 0.2 mm, 4 perimeters, 30 % infill.
 
-| Part | Qty | Orientation |
-|---|---|---|
-| base_tub | 1 | as exported (floor down) |
-| base_lid | 1 | as exported |
-| head | 1 | as exported (bearing pocket down) |
-| arm_root | 1 | as exported (rail face down) |
-| arm_tip | 1 | as exported |
-| nozzle_holder | 1 | as exported. Supports under the belt clamp |
-| switch_bracket | 2 | as exported |
-| pump_bracket | 1 | as exported. Drill the slots to suit your pump |
-| meter_clip | 1 | as exported (column plate down). Set `meter_body` in `config.scad` to your meter first |
+| Part | Qty | ≈ g each | Orientation |
+|---|---|---|---|
+| base_tub | 1 | 245 | as exported (floor down) |
+| base_lid | 1 | 120 | as exported |
+| head | 1 | 80 | as exported (bearing pocket down) |
+| arm_root | 1 | 50 | as exported (rail face down) |
+| arm_tip | 1 | 12 | as exported |
+| nozzle_holder | 1 | 12 | as exported. Supports under the belt clamp |
+| switch_bracket | 2 | 2 | as exported |
+| pump_bracket | 1 | 20 | as exported. Drill the slots to suit your pump |
+| meter_clip | 1 | 12 | as exported (column plate down). Set `meter_body` in `config.scad` to your meter first |
+
+### Filament
+
+The parts weigh about **550 g** in PETG at the settings above. Allow about
+**600 g** for supports, brims and purge, which is roughly 60 % of a 1 kg
+spool. At US$18–25 per kg, the filament costs about
+**US$11–15 / CA$16–21 / €10–13**. ASA weighs about 15 % less (it's less dense).
+
+The weights are estimates from the CAD volumes, not slicer output, so your
+slicer's figure may differ by 10–15 %. Most of the plastic is in the
+thin-walled base tub and lid, which print nearly solid at any infill.
 
 No printed part touches water or a hot cup. Water only touches the silicone
 tube, the flow meter and the stainless nozzle, and the coaster isolates the
